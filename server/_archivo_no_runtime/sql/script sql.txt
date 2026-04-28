@@ -1,0 +1,135 @@
+CREATE DATABASE IF NOT EXISTS minimarket;
+USE minimarket;
+
+CREATE TABLE IF NOT EXISTS formato_venta (
+    id_formato INT AUTO_INCREMENT PRIMARY KEY,
+    descripcion VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS departamento (
+    id_departamento INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(80) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user VARCHAR(80) NOT NULL UNIQUE,
+    nombre VARCHAR(120) NOT NULL,
+    contrasena VARCHAR(255) NOT NULL,
+    estado_usuario TINYINT(1) NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS info (
+    id_info INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(255) NOT NULL,
+    telefono VARCHAR(20) NOT NULL,
+    tipo_local VARCHAR(100) NOT NULL,
+    mail VARCHAR(255) NOT NULL,
+    inventario TINYINT(1) NOT NULL DEFAULT 0,
+    credito TINYINT(1) NOT NULL DEFAULT 0,
+    producto_comun TINYINT(1) NOT NULL DEFAULT 0,
+    margen_ganancia TINYINT(1) NOT NULL DEFAULT 0,
+    monto_ganancia DECIMAL(10,2) NOT NULL DEFAULT 0,
+    redondeo TINYINT(1) NOT NULL DEFAULT 0,
+    monto_redondeo DECIMAL(10,2) NOT NULL DEFAULT 0,
+    mensaje TINYINT(1) NOT NULL DEFAULT 0,
+    data_mensaje VARCHAR(255) NULL,
+    time_mensaje INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS cajas (
+    id_caja INT AUTO_INCREMENT PRIMARY KEY,
+    n_caja INT NOT NULL UNIQUE,
+    nombre_caja VARCHAR(120) NOT NULL UNIQUE,
+    estado TINYINT(1) NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS conectados (
+    id_conectado INT AUTO_INCREMENT PRIMARY KEY,
+    caja_conectada INT NOT NULL,
+    estado TINYINT(1) NOT NULL,
+    user_id INT NOT NULL,
+    fecha_conexion DATE NOT NULL,
+    hora_conexion TIME NOT NULL,
+    INDEX idx_conectados_caja_fecha (caja_conectada, fecha_conexion),
+    INDEX idx_conectados_user_fecha (user_id, fecha_conexion)
+);
+
+CREATE TABLE IF NOT EXISTS productos (
+    id_producto INT AUTO_INCREMENT PRIMARY KEY,
+    codigo_barras VARCHAR(80) NOT NULL UNIQUE,
+    descripcion VARCHAR(255) NOT NULL,
+    id_formato INT NOT NULL,
+    costo DECIMAL(10,2) NOT NULL DEFAULT 0,
+    ganancia DECIMAL(10,2) NOT NULL DEFAULT 0,
+    precio_venta DECIMAL(10,2) NOT NULL DEFAULT 0,
+    precio_mayoreo DECIMAL(10,2) NULL,
+    utiliza_inventario TINYINT(1) NOT NULL DEFAULT 0,
+    cantidad_actual DECIMAL(10,2) NOT NULL DEFAULT 0,
+    cantidad_minima DECIMAL(10,2) NOT NULL DEFAULT 0,
+    cantidad_maxima DECIMAL(10,2) NOT NULL DEFAULT 0,
+    id_departamento INT NOT NULL,
+    INDEX idx_productos_departamento (id_departamento),
+    CONSTRAINT fk_productos_formato FOREIGN KEY (id_formato) REFERENCES formato_venta(id_formato),
+    CONSTRAINT fk_productos_departamento FOREIGN KEY (id_departamento) REFERENCES departamento(id_departamento)
+);
+
+CREATE TABLE IF NOT EXISTS ventas (
+    id_venta INT AUTO_INCREMENT PRIMARY KEY,
+    fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    numero_ticket INT NOT NULL,
+    usuario_id INT NOT NULL,
+    metodo_pago VARCHAR(20) NOT NULL,
+    caja_id INT NOT NULL,
+    total DECIMAL(10,2) NOT NULL DEFAULT 0,
+    INDEX idx_ventas_fecha (fecha),
+    INDEX idx_ventas_usuario_fecha (usuario_id, fecha),
+    INDEX idx_ventas_caja_fecha (caja_id, fecha)
+);
+
+CREATE TABLE IF NOT EXISTS detalle_venta (
+    id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+    venta_id INT NOT NULL,
+    producto_id INT NOT NULL,
+    cantidad DECIMAL(10,2) NOT NULL,
+    precio_unitario DECIMAL(10,2) NOT NULL,
+    subtotal DECIMAL(10,2) NOT NULL,
+    INDEX idx_detalle_venta (venta_id),
+    INDEX idx_detalle_producto (producto_id),
+    CONSTRAINT fk_detalle_venta FOREIGN KEY (venta_id) REFERENCES ventas(id_venta),
+    CONSTRAINT fk_detalle_producto FOREIGN KEY (producto_id) REFERENCES productos(id_producto)
+);
+
+CREATE TABLE IF NOT EXISTS corte_caja (
+    id_corte INT AUTO_INCREMENT PRIMARY KEY,
+    fecha DATE NOT NULL,
+    caja_id INT NOT NULL,
+    usuario_id INT NOT NULL,
+    hora_apertura DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    hora_cierre DATETIME NULL,
+    monto_inicial DECIMAL(10,2) NOT NULL DEFAULT 0,
+    monto_declarado DECIMAL(10,2) NOT NULL DEFAULT 0,
+    diferencia_efectivo DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total_efectivo DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total_tarjeta DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total_mixto DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total_ventas DECIMAL(10,2) NOT NULL DEFAULT 0,
+    transacciones INT NOT NULL DEFAULT 0,
+    estado ENUM('abierto','cerrado') NOT NULL DEFAULT 'cerrado',
+    observaciones VARCHAR(255) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_corte_fecha_caja_usuario (fecha, caja_id, usuario_id),
+    INDEX idx_corte_fecha (fecha),
+    INDEX idx_corte_caja (caja_id),
+    INDEX idx_corte_usuario (usuario_id)
+);
+
+INSERT IGNORE INTO formato_venta (descripcion) VALUES
+('unidad'),
+('granel'),
+('pack');
+
+INSERT IGNORE INTO departamento (nombre) VALUES
+('verduleria'),
+('lacteos'),
+('libreria');

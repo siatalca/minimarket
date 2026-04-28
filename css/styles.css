@@ -1,0 +1,337 @@
+/* inicio de home 
+Estilos generales */
+@font-face {
+    font-family: 'GetVoIP Grotesque';
+    src: url('../fonts/GetVoIP\ Grotesque.ttf') format('truetype'),
+        url('../fonts/GetVoIP\ Grotesque\ Italic.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+    font-family: 'GetVoIPGrotesque', sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f9;
+}
+
+header {
+    background-color: #333;
+    color: white;
+    padding-top: 5px;
+    text-align: left;
+}
+
+header h1 {
+    margin: 0;
+}
+
+.sub {
+    color: black;
+    text-align: left;
+    margin: 0;
+    padding: 0;
+
+}
+
+.subtitulo {
+    height: 40px;
+    background-color: #bee182;
+    color: white;
+    padding-bottom: 20px;
+    padding-left: 40px;
+    align-content: center;
+}
+
+.sub h1 {
+    margin-left: 10px;
+
+}
+
+.nav-inv {
+    margin-left: 10px;
+
+}
+
+nav button {
+    background-color: #555;
+    color: white;
+    padding: 10px;
+    margin: 5px;
+    border: none;
+    cursor: pointer;
+}
+
+nav button:hover {
+    background-color: #666;
+}
+
+/* Sección principal */
+main {
+
+    background-color: #a6d4ff;
+    height: 100%;
+    padding-bottom: 20px;
+}
+
+.hidden {
+    display: none;
+}
+
+ul {
+    margin-top: 0px;
+    margin-bottom: 0px;
+    text-align: center;
+
+
+    border-radius: 5px;
+    list-style-type: none;
+    padding: 0;
+}
+
+
+
+/* Estilo del formulario de productos */
+input {
+    padding: 12px;
+    width: 700px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.checkbox {
+    width: 40px;
+}
+
+.radio {
+    margin: 0px;
+    width: 40px;
+}
+
+select {
+    padding: 10px;
+    margin: 5px;
+    width: 180px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.pesos {
+    padding: 10px;
+    margin: 5px;
+    width: 120px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+button {
+    background-color: #4CAF50;
+    color: white;
+    margin: 10px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+.content {
+    width: auto;
+    height: 100%;
+    background-color: white;
+    margin: 10px;
+    padding: 20px;
+}
+
+.content2 {
+    padding-left: 20px;
+    height: 200px;
+}
+
+.newproducto {
+    margin: 30px;
+}
+
+img {
+    width: 35px;
+    height: 35px;
+    border-radius: 10px;
+    border-color: rgb(164, 153, 153);
+    border-style: ridge;
+}
+
+
+.tablaConfigContent tr {
+    height: 50px;
+    text-align: center;
+    border-color: #333;
+
+
+}
+
+.tablaConfig tr td {
+
+
+    text-align: center;
+    align-content: center;
+    border-color: #333;
+}
+
+.tablaConfig {
+    width: 100%;
+    height: 100%;
+
+}
+
+.centrar {
+    text-align: center;
+}
+
+.color1 {
+    background-color: #a6d4ff28;
+    color: black;
+}
+
+.tablaConfigContent {
+
+    background-color: rgb(253, 253, 253);
+    margin-top: 4px;
+    margin-left: 4px;
+    margin-right: 4px;
+    text-align: center;
+    padding-left: 20px;
+    padding-right: 20px;
+}
+
+.separador {
+    width: 100%;
+    height: 1px;
+    background-color: black;
+}
+
+.btn {
+
+    justify-content: center;
+    /* Centrar horizontalmente */
+    align-items: center;
+    /* Centrar verticalmente */
+    width: 140px;
+    /* Tamaño fijo del botón */
+    height: 60px;
+    /* Tamaño fijo del botón */
+    background-color: #d7dfe8;
+    /* Color de fondo */
+    color: #040404;
+    /* Color del ícono */
+    border: none;
+    /* Sin borde */
+    border-radius: 5%;
+    /* Botón redondeado */
+    cursor: pointer;
+    font-size: 14px;
+    /* Tamaño del ícono */
+    transition: background-color 0.3s;
+    margin: 10px;
+}
+
+.btn2 {
+
+    justify-content: center;
+    /* Centrar horizontalmente */
+    align-items: center;
+    /* Centrar verticalmente */
+    width: 50px;
+    /* Tamaño fijo del botón */
+    height: 50px;
+    /* Tamaño fijo del botón */
+    background-color: #d7dfe8;
+    /* Color de fondo */
+    color: #d7dfe8;
+    /* Color del ícono */
+    border: none;
+    /* Sin borde */
+    border-radius: 5%;
+    /* Botón redondeado */
+    cursor: pointer;
+    font-size: 10px;
+    /* Tamaño del ícono */
+    transition: background-color 0.3s;
+    border-radius: 10px;
+}
+
+
+.btn:hover {
+    background-color: #b8c5d1;
+}
+
+.btn2:hover {
+    background-color: #b8c5d1;
+}
+
+.btn i {
+    font-size: 20px;
+    align-content: center;
+}
+
+
+#total-amount {
+    text-align: right;
+}
+
+label {
+    margin-right: 15px;
+}
+
+
+.confOptionTitle {
+    height: 5px;
+}
+
+table {
+    width: 100%;
+    padding: 5px;
+    background-color: #f8f9fa59;
+    border-style: solid;
+    border-color: #333;
+    border-spacing: 0px;
+    border-width: thin;
+}
+
+th {
+    background-color: #f4f4f4;
+    border-style: solid;
+    border-color: #333;
+    border-spacing: 0px;
+    border-width: thin;
+    text-align: center;
+    font-weight: bold;
+}
+
+tr {
+    margin: 20px;
+}
+
+th,
+td {
+
+    border: 1px solid #ddd;
+    text-align: left;
+    word-wrap: break-word;
+    /* Permite que el texto se ajuste si es muy largo */
+}
+
+/* Alternancia suave de filas para mejorar lectura de tablas */
+table:not(.ventas-quick-actions):not(.no-zebra) > tbody > tr:nth-child(odd) > td,
+table:not(.ventas-quick-actions):not(.no-zebra) > tbody > tr:nth-child(odd) > th {
+    background-color: #ffffff;
+}
+
+table:not(.ventas-quick-actions):not(.no-zebra) > tbody > tr:nth-child(even) > td,
+table:not(.ventas-quick-actions):not(.no-zebra) > tbody > tr:nth-child(even) > th {
+    background-color: #f6faff;
+}
+
+
+/*termino de home style*/

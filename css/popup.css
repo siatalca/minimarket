@@ -1,0 +1,620 @@
+/* Contenedor principal */
+#miPopUp {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 16px;
+}
+
+/* Contenido del popup */
+.contenidoPopUp {
+    background: var(--clr-bg-light);
+    color: var(--clr-text-light);
+    width: min(1180px, 96vw);
+    height: min(860px, 92vh);
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* Título */
+.popup-titulo {
+    min-height: 44px;
+    display: flex;
+    color: var(--clr-text-dark);
+    background: var(--clr-degrade-banner);
+}
+
+.popup-titulo-texto {
+    padding: 5px;
+    width: 100%;
+    height: 30px;
+    display: flex;
+    align-items: center;
+}
+
+.popup-cerrar {
+    margin: 1px;
+    color: var(--clr-text-dark);
+    background: var(--clr-error);
+    width: 44px;
+    height: 40px;
+    border: none;
+    cursor: pointer;
+}
+
+/* Body principal */
+.popup-body {
+    width: 100%;
+    height: calc(100% - 44px);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 250px;
+    gap: 0;
+    overflow: hidden;
+}
+
+/* Popup compacto para productos a granel */
+#bulkProductPopUp {
+    padding: 10px;
+}
+
+#bulkProductPopUp .bulk-popup-content {
+    width: min(440px, 92vw);
+    max-width: 440px;
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+}
+
+#bulkProductPopUp .bulk-popup-body {
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 12px 10px;
+}
+
+#bulkProductPopUp .bulk-popup-status {
+    margin: 0;
+    padding: 8px 10px;
+}
+
+#bulkProductPopUp .bulk-popup-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: end;
+    margin: 0;
+}
+
+#bulkProductPopUp .bulk-popup-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+}
+
+#bulkProductPopUp .bulk-popup-body label {
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+#bulkProductPopUp .bulk-popup-body .form-input {
+    height: 30px;
+    padding: 4px 8px;
+}
+
+#bulkProductPopUp .bulk-popup-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+#bulkProductPopUp .bulk-popup-actions .btn2 {
+    height: 30px;
+    min-width: 92px;
+    margin: 0;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+@media (max-width: 520px) {
+    #bulkProductPopUp .bulk-popup-content {
+        width: min(360px, 94vw);
+    }
+
+    #bulkProductPopUp .bulk-popup-inputs {
+        grid-template-columns: 1fr;
+    }
+
+    #bulkProductPopUp .bulk-popup-actions {
+        justify-content: stretch;
+    }
+
+    #bulkProductPopUp .bulk-popup-actions .btn2 {
+        flex: 1;
+        min-width: 0;
+    }
+}
+
+/* Sección de métodos de pago */
+.popup-metodo {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Subtítulo */
+.popup-subtitulo {
+    min-height: 36px;
+    padding: 5px;
+    font-size: 16px;
+    background: var(--clr-degrade);
+    color: var(--clr-text-dark);
+}
+
+/* Monto */
+.popup-monto {
+    min-height: 110px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 6px 10px;
+}
+
+.popup-monto p {
+    font-size: clamp(46px, 6vw, 92px);
+    font-weight: 800;
+    text-align: center;
+}
+
+/* Tabs de selección de métodos */
+.popup-metodos {
+    width: 100%;
+    padding: 10px 12px;
+    flex-shrink: 0;
+}
+
+#miPopUp .tabss {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+#miPopUp .tabss .tab {
+    width: 100%;
+    min-height: 84px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    border: 2px solid transparent;
+    border-radius: 5px;
+    transition: 0.3s;
+}
+
+#miPopUp .tabss .tab:hover {
+    border-color: var(--clr-primary-light);
+}
+
+#miPopUp .tabss .tab.active {
+    border-color: var(--clr-primary-light);
+}
+
+#miPopUp .tab-img {
+    width: 100%;
+    height: 55px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#miPopUp .tab-img img {
+    width: 38px;
+    max-height: 38px;
+    object-fit: contain;
+}
+
+#miPopUp .tab-texto {
+    width: 100%;
+    min-height: 24px;
+    text-align: center;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Contenido de los métodos de pago */
+#miPopUp .div-tab {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    padding: 8px 12px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+}
+
+#miPopUp .tab-metodo-pago-content {
+    display: none;
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+#miPopUp .tab-metodo-pago-content.active {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100%;
+}
+
+/* Sección de finalizar venta */
+#miPopUp .popup-finalizar {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    background: var(--clr-header-light);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 12px 8px;
+}
+
+#miPopUp .payment-warning {
+    width: 88%;
+    margin: 10px 0 6px;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--clr-error);
+    background: rgba(220, 38, 38, 0.1);
+    color: var(--clr-error);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+#miPopUp .btn2 {
+    margin: 8px 0;
+    padding: 10px;
+    background: var(--clr-secondary-light);
+    color: var(--clr-text-dark);
+    border: none;
+    cursor: pointer;
+    width: 80%;
+    border-radius: 5px;
+    transition: 0.3s;
+}
+
+#miPopUp .btn2:hover {
+    background: var(--clr-primary-light);
+}
+
+#miPopUp .btn2:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    background: #c9c9c9;
+}
+
+
+#miPopUp .parent {
+
+    display: grid;
+    grid-template-columns: 170px minmax(220px, 380px);
+    grid-template-rows: repeat(5, 1fr);
+    grid-column-gap: 30px;
+    grid-row-gap: 8px;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+/* Garantiza visibilidad de campos de cobro en popup de venta */
+#miPopUp #efectivo input,
+#miPopUp #mixto input,
+#miPopUp #tarjeta input {
+    display: block;
+    visibility: visible;
+    opacity: 1;
+}
+
+#miPopUp .div1 {
+    grid-area: 1 / 1 / 2 / 2;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+}
+
+#miPopUp .div2 {
+    grid-area: 1 / 2 / 2 / 3;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+}
+
+#miPopUp .div3 {
+    grid-area: 2 / 1 / 3 / 2;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+}
+
+#miPopUp .div4 {
+    grid-area: 2 / 2 / 3 / 3;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+}
+
+#miPopUp .div5 {
+    grid-area: 3 / 1 / 4 / 2;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+}
+
+#miPopUp .div6 {
+    grid-area: 3 / 2 / 4 / 3;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+}
+
+#miPopUp .div2 input {
+    height: 40px;
+    width: 100%;
+    font-size: 1rem;
+    padding-left: 5px;
+}
+
+#miPopUp .div4 input,
+#miPopUp .div6 input {
+    height: 40px;
+    width: 100%;
+    font-size: 1rem;
+    padding-left: 5px;
+}
+
+@media (max-width: 1150px) {
+    .popup-body {
+        grid-template-columns: minmax(0, 1fr) 230px;
+    }
+
+    #miPopUp .tabss {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .popup-body {
+        grid-template-columns: 1fr;
+    }
+
+    #miPopUp .popup-finalizar {
+        border-top: 1px solid #d1d5db;
+        flex-direction: row;
+        gap: 8px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    #miPopUp .payment-warning {
+        width: 98%;
+    }
+
+    #miPopUp .btn2 {
+        width: auto;
+        min-width: 190px;
+    }
+
+    #miPopUp .tabss {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Popup de tickets pendientes (F6): compacto y centrado */
+#pendingTicketsPopUp {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 16px;
+    z-index: 1200;
+}
+
+#pendingTicketsPopUp .pending-tickets-popup-content {
+    width: min(900px, 94vw);
+    height: auto;
+    max-height: min(620px, 90vh);
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+#pendingTicketsPopUp .pending-tickets-popup-body {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: 1fr;
+    overflow: hidden;
+}
+
+#pendingTicketsPopUp .pending-tickets-popup-panel {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#pendingTicketsPopUp .pending-tickets-table-wrap {
+    max-height: min(430px, 62vh);
+    overflow: auto;
+    padding: 8px 10px 10px;
+}
+
+@media (max-width: 700px) {
+    #pendingTicketsPopUp .pending-tickets-popup-content {
+        width: min(96vw, 640px);
+        max-height: min(560px, 88vh);
+    }
+
+    #pendingTicketsPopUp .pending-tickets-table-wrap {
+        max-height: min(360px, 58vh);
+    }
+}
+
+/* Popup de cobro: mejora visual y jerarquia de acciones */
+#miPopUp .contenidoPopUp {
+    width: min(1120px, 95vw);
+    height: min(820px, 92vh);
+    border-radius: 14px;
+    border: 1px solid #c8d6e8;
+    background: linear-gradient(180deg, #f8fbff 0%, #eef4fb 100%);
+    box-shadow: 0 18px 44px rgba(15, 23, 42, 0.32);
+}
+
+#miPopUp .popup-titulo {
+    min-height: 52px;
+    align-items: center;
+    padding: 0 6px 0 14px;
+    border-bottom: 1px solid #cddcec;
+    background: linear-gradient(90deg, #1e40af 0%, #3b82f6 100%);
+}
+
+#miPopUp .popup-titulo-texto {
+    height: auto;
+    padding: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    color: #f8fafc;
+}
+
+#miPopUp .popup-cerrar {
+    width: 40px;
+    height: 40px;
+    margin: 5px 2px 5px 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(220, 38, 38, 0.92);
+}
+
+#miPopUp .popup-body {
+    grid-template-columns: minmax(0, 1fr) 290px;
+    background: #ffffff;
+}
+
+#miPopUp .popup-metodo {
+    background: #ffffff;
+}
+
+#miPopUp .popup-finalizar {
+    border-left: 1px solid #d8e3f0;
+    background: linear-gradient(180deg, #f8fbff 0%, #edf3fb 100%);
+    padding: 14px 12px;
+    gap: 9px;
+    align-items: stretch;
+}
+
+#miPopUp .payment-warning {
+    width: 100%;
+    margin: 0 0 4px;
+    font-size: 0.84rem;
+}
+
+#miPopUp .popup-finalizar .btn2 {
+    width: 100%;
+    min-height: 46px;
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    font-size: 0.88rem;
+    font-weight: 700;
+    letter-spacing: 0.15px;
+    box-shadow: 0 2px 0 rgba(15, 23, 42, 0.18);
+    transition: transform 0.15s ease, filter 0.2s ease, box-shadow 0.2s ease;
+}
+
+#miPopUp #finalize-sale-btn.btn2 {
+    color: #ffffff;
+    background: linear-gradient(180deg, #16a34a 0%, #15803d 100%);
+    border-color: #166534;
+}
+
+#miPopUp #finalize-no-receipt-btn.btn2 {
+    color: #ffffff;
+    background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+    border-color: #1e40af;
+}
+
+#miPopUp #cancel-sale-popup-btn.btn2 {
+    color: #f8fafc;
+    background: linear-gradient(180deg, #4b5563 0%, #374151 100%);
+    border-color: #1f2937;
+}
+
+#miPopUp .popup-finalizar .btn2:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.04);
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.2);
+}
+
+#miPopUp .popup-finalizar .btn2:disabled {
+    background: #aebcd2 !important;
+    border-color: #98aac6 !important;
+    color: #eef2f8 !important;
+    box-shadow: none !important;
+}
+
+@media (max-width: 900px) {
+    #miPopUp .popup-body {
+        grid-template-columns: 1fr;
+    }
+
+    #miPopUp .popup-finalizar {
+        border-left: 0;
+        border-top: 1px solid #d8e3f0;
+        flex-direction: column;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        gap: 8px;
+        padding: 10px;
+    }
+
+    #miPopUp .popup-finalizar .btn2 {
+        min-width: 0;
+        min-height: 42px;
+        width: 100%;
+    }
+}

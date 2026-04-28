@@ -1,0 +1,341 @@
+/* =============================================================
+   styleslogin.css — Unificado con variables globales (2025‑07‑14)
+   Se reemplazaron todos los colores hard‑codeados por variables
+   definidas en :root y sobreescritas en body.dark cuando aplica.
+   ============================================================= */
+
+/* ===============  BASE  =============== */
+* {
+    box-sizing: border-box;
+}
+
+@font-face {
+    font-family: 'GetVoIP Grotesque';
+    src: url('../fonts/GetVoIP\ Grotesque.ttf') format('truetype'),
+        url('../fonts/GetVoIP\ Grotesque\ Italic.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+    font-family: 'GetVoIPGrotesque', sans-serif;
+    margin: 0;
+    background:
+        radial-gradient(circle at 18% 20%, rgba(29, 78, 216, 0.20), transparent 42%),
+        radial-gradient(circle at 82% 78%, rgba(14, 165, 233, 0.18), transparent 40%),
+        linear-gradient(135deg, #f1f5f9 0%, #dbeafe 48%, #f8fafc 100%);
+    color: var(--clr-text-light);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    position: relative;
+}
+
+/* ===============  CONTENEDOR LOGIN  =============== */
+.login-container {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(248, 250, 252, 0.97) 100%);
+    padding: 1.6rem 1.5rem 1.4rem;
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    box-shadow: 0 20px 42px rgba(2, 6, 23, 0.18);
+    width: 100%;
+    max-width: 420px;
+    text-align: center;
+    transition: background-color 0.3s ease;
+    color: var(--clr-bg-dark);
+}
+
+.welcome-container > img {
+    width: 350px;
+}
+
+.welcome-container {
+    background: var(--clr-bg-light);
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+    width: 100%;
+    max-width: 850px;
+    height: 700px;
+    transition: background-color 0.3s ease;
+    color: var(--clr-bg-dark);
+    overflow-y: scroll;
+}
+
+.left {
+    text-align: left;
+    justify-content: left;
+}
+
+.center {
+    text-align: center;
+    justify-content: center;
+}
+
+.large input {
+    width: 100%;
+}
+
+.media input {
+    width: 50%;
+}
+
+.small input {
+    width: 20%;
+}
+
+.welcome-container h1 {
+    margin-bottom: 1rem;
+    color: var(--clr-text-light);
+}
+
+.login-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+    border-radius: 12px;
+}
+
+#login-company-logo {
+    width: 78px;
+    height: 78px;
+    object-fit: contain;
+    border-radius: 50%;
+    border: 2px solid rgba(29, 78, 216, 0.22);
+    background: #fff;
+    box-shadow: 0 8px 18px rgba(2, 6, 23, 0.18);
+}
+
+.login-brand-text {
+    text-align: left;
+    min-width: 0;
+}
+
+.login-brand-text h1 {
+    margin: 0;
+    font-size: 1.2rem;
+    letter-spacing: 0.2px;
+    color: #0f172a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.login-brand-text p {
+    margin: 4px 0 0;
+    font-size: 0.84rem;
+    color: #334155;
+}
+
+/* =================  FORMULARIO  ================= */
+.login-container input {
+    width: 100%;
+    padding: 0.75rem;
+    display: flex;
+    margin: 0.5rem 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 9px;
+    background: #ffffff;
+    color: #0f172a;
+    transition: background 0.3s ease, border 0.3s ease;
+}
+
+.login-container input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.welcome-container input {
+
+    padding: 0.75rem;
+    margin: 0.5rem 0;
+    border: 1px solid var(--clr-secondary-light);
+    border-radius: 5px;
+    background: var(--clr-bg-light);
+    color: var(--clr-text-light);
+    transition: background 0.3s ease, border 0.3s ease;
+}
+
+.welcome-container select {
+    width: 100%;
+    padding: 0.75rem;
+    margin: 0.5rem 0;
+    border: 1px solid var(--clr-secondary-light);
+    border-radius: 5px;
+    background: var(--clr-bg-light);
+    color: var(--clr-text-light);
+    transition: background 0.3s ease, border 0.3s ease;
+}
+
+.login-container button {
+    width: 100%;
+    padding: 0.75rem;
+    margin-top: 0.5rem;
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+    color: #ffffff;
+    border: none;
+    border-radius: 9px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.welcome-container button {
+    width: 60%;
+    padding: 0.75rem;
+    margin-top: 0.5rem;
+    background-color: var(--clr-primary-light);
+    color: var(--clr-text-light);
+    border: none;
+    border-radius: 5px;
+    font-size: 1.25rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.login-container button:hover {
+    background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%);
+    color: #ffffff;
+}
+
+.welcome-container button:hover {
+    background-color: var(--clr-primary-dark);
+    color: var(--clr-text-dark);
+}
+
+/* =================  MENSAJES  ================= */
+#login-error {
+    color: #b91c1c;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.9em;
+    margin-top: 1em;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* =================  BOTÓN TEMA  ================= */
+.theme-toggle {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 46px;
+    height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid rgba(16, 35, 63, 0.2);
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(4px);
+    box-shadow: 0 6px 16px rgba(16, 35, 63, 0.18);
+    font-size: 1.15rem;
+    color: var(--clr-primary-light);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.theme-toggle:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 20px rgba(16, 35, 63, 0.22);
+    background: #ffffff;
+}
+
+.theme-toggle:active {
+    transform: translateY(0);
+}
+
+.theme-toggle:focus-visible {
+    outline: 2px solid var(--clr-primary-light);
+    outline-offset: 2px;
+}
+
+/* ------------------------------------------------
+   MODO OSCURO — Sobrescribe variables y usa las mismas reglas
+------------------------------------------------ */
+body.dark {
+    background:
+        radial-gradient(circle at 18% 20%, rgba(37, 99, 235, 0.22), transparent 40%),
+        radial-gradient(circle at 82% 78%, rgba(14, 165, 233, 0.16), transparent 42%),
+        linear-gradient(135deg, #0b1220 0%, #111827 50%, #0f172a 100%);
+    color: var(--clr-text-dark);
+
+}
+
+body.dark .login-container {
+    background: linear-gradient(180deg, rgba(17, 24, 39, 0.96) 0%, rgba(15, 23, 42, 0.96) 100%);
+    border-color: rgba(148, 163, 184, 0.25);
+    color: var(--clr-text-dark);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+}
+
+body.dark .login-brand {
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%);
+    border-color: rgba(59, 130, 246, 0.28);
+}
+
+body.dark .login-brand-text h1 {
+    color: #e2e8f0;
+}
+
+body.dark .login-brand-text p {
+    color: #94a3b8;
+}
+
+body.dark .login-container input {
+    background-color: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+}
+
+body.dark .login-container button {
+    background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%);
+    color: #ffffff;
+}
+
+body.dark .login-container button:hover {
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+    color: #ffffff;
+}
+
+body.dark #login-error {
+    background: rgba(127, 29, 29, 0.3);
+    border-color: rgba(248, 113, 113, 0.45);
+    color: #fecaca;
+}
+
+body.dark .theme-toggle {
+    color: var(--clr-primary-dark);
+    background: rgba(11, 20, 36, 0.85);
+    border-color: rgba(232, 240, 255, 0.22);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+
+body.dark .theme-toggle:hover {
+    background: rgba(17, 36, 64, 0.95);
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.55);
+}
+
+body.dark .theme-toggle:focus-visible {
+    outline-color: var(--clr-primary-dark);
+}
+
+/* =================  RESPONSIVO  ================= */
+@media (max-width: 400px) {
+    .login-container {
+        padding: 1.5rem;
+        width: 90%;
+    }
+}

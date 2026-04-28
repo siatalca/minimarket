@@ -1,0 +1,30 @@
+/* ---------- VARIABLES GLOBALES ---------- */
+:root {
+    /* Paleta corporativa SIA - modo claro */
+    --clr-bg-light: #F3F7FC;
+    --clr-text-light: #10233F;
+    --clr-text-sec-light: #4C6183;
+    --clr-primary-light: #0057B8;
+    --clr-secondary-light: #0F2F5F;
+    --clr-header-light: #D8E7FA;
+
+    /* Paleta corporativa SIA - modo oscuro */
+    --clr-bg-dark: #0B1424;
+    --clr-text-dark: #E8F0FF;
+    --clr-text-sec-dark: #A4B8D8;
+    --clr-primary-dark: #3A8DFF;
+    --clr-secondary-dark: #1B355A;
+    --clr-header-dark: #112440;
+
+    /* Estados */
+    --clr-error: #DC2626;
+    --clr-success: #16A34A;
+    --clr-pending: #EAB308;
+
+    /* Degradados */
+    --clr-degrade: linear-gradient(90deg, #0057B8 0%, #00A3E0 100%);
+    --clr-degrade-banner: linear-gradient(90deg, #0F2F5F 0%, #0057B8 52%, #00A3E0 100%);
+
+    /* Alias de compatibilidad */
+    --clr-primary: var(--clr-primary-light);
+}
