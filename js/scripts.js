@@ -5282,7 +5282,7 @@ function buildPaymentAllocation(totalAmount, metodoPago) {
     return { monto_efectivo: 0, monto_tarjeta: 0 };
 }
 
-const LOCAL_PRINT_BRIDGE_CANDIDATES = ['http://127.0.0.1:7357/'];
+const LOCAL_PRINT_BRIDGE_CANDIDATES = ['http://127.0.0.1:7357/', 'http://localhost:7357/'];
 let localPrintBridgeState = { base: null, checkedAt: 0 };
 const LOCAL_PRINT_BRIDGE_CACHE_MS = 180000;
 
@@ -5316,10 +5316,8 @@ async function resolveLocalPrintBridgeBase(force = false) {
 
 function shouldForceLocalTicketPrinting() {
     const raw = String(localStorage.getItem('force_local_ticket_print') || '').trim().toLowerCase();
-    if (raw === '0' || raw === 'false' || raw === 'no') {
-        return false;
-    }
-    return true;
+    if (!raw) return false;
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'si';
 }
 
 function getLocalPrintBridgeRequiredMessage() {
