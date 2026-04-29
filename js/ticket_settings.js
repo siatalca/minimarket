@@ -11,17 +11,15 @@ const API_URL = (() => {
     return `${protocol}//${window.location.hostname}:3002/`;
 })();
 
-const LOCAL_PRINT_BRIDGE_BASES = ['http://127.0.0.1:7357/'];
+const LOCAL_PRINT_BRIDGE_BASES = ['http://127.0.0.1:7357/', 'http://localhost:7357/'];
 let localPrintBridgeCache = { base: null, checkedAt: 0 };
 let lastPrintersSource = 'server';
 const LOCAL_PRINT_BRIDGE_CACHE_MS = 180000;
 
 function shouldForceLocalTicketPrinting() {
     const raw = String(localStorage.getItem('force_local_ticket_print') || '').trim().toLowerCase();
-    if (raw === '0' || raw === 'false' || raw === 'no') {
-        return false;
-    }
-    return true;
+    if (!raw) return false;
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'si';
 }
 
 function getLocalPrintBridgeRequiredMessage() {
