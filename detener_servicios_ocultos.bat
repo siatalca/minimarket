@@ -70,7 +70,7 @@ set "REMAINING=0"
 set "LOCAL_EXIT=0"
 set "SEEN_PIDS=;"
 
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTENING"') do (
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTENING" /C:":!LOOKUP_PORT! .*ESCUCHANDO"') do (
   if "!SEEN_PIDS:;%%P;=!"=="!SEEN_PIDS!" (
     set "SEEN_PIDS=!SEEN_PIDS!%%P;"
     set "FOUND=1"
@@ -82,7 +82,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTE
         echo [WARN] No se pudo detener PID %%P.
         set "LOCAL_EXIT=1"
       ) else (
-        echo [OK] PID %%P detenido (fallback PowerShell).
+        echo [OK] PID %%P detenido ^(fallback PowerShell^).
       )
     ) else (
       echo [OK] PID %%P detenido.
@@ -91,7 +91,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTE
 )
 
 set "SEEN_PIDS=;"
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTENING"') do (
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTENING" /C:":!LOOKUP_PORT! .*ESCUCHANDO"') do (
   if "!SEEN_PIDS:;%%P;=!"=="!SEEN_PIDS!" (
     set "SEEN_PIDS=!SEEN_PIDS!%%P;"
     set "REMAINING=1"
@@ -111,10 +111,10 @@ setlocal EnableDelayedExpansion
 set "LOOKUP_PORT=%~1"
 set "SERVICE_NAME=%~2"
 set "FOUND=0"
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTENING"') do (
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":!LOOKUP_PORT! .*LISTENING" /C:":!LOOKUP_PORT! .*ESCUCHANDO"') do (
   if "!FOUND!"=="0" (
     set "FOUND=1"
-    echo [WARN] Verificacion final: !SERVICE_NAME! sigue activo en !LOOKUP_PORT! (PID %%P).
+    echo [WARN] Verificacion final: !SERVICE_NAME! sigue activo en !LOOKUP_PORT! ^(PID %%P^).
   )
 )
 if "!FOUND!"=="1" (
