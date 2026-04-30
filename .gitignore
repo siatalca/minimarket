@@ -12,6 +12,8 @@ server/storage/
 # Secrets
 server/.env
 server/.jwt_secret
+paquete_cliente_db/server/.env
+paquete_cliente_db/server/.jwt_secret
 
 # OS / editor
 .DS_Store
