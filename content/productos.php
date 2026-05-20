@@ -44,7 +44,7 @@
             </div>
         </div>
         <div class="form-row form-actions">
-            <button class="btn" type="button" onclick="addProduct()">Guardar</button>
+            <button class="btn" type="button" id="product-add-save-btn" onclick="addProduct()">Guardar</button>
             <button class="btn" type="button" onclick="clearProductAddForm()">Limpiar</button>
             <button class="btn" type="button" onclick="cancelProductOperation('add')">Cancelar</button>
         </div>
@@ -77,7 +77,7 @@
             <div class="form-row"><label><input type="checkbox" id="product-edit-tax-exempt"> Exento de IVA</label></div>
             <div class="form-row"><label><input type="checkbox" id="product-edit-use-inventory"> Habilitar inventario para este producto</label></div>
             <div class="form-row form-actions">
-                <button class="btn" type="button" onclick="saveModifiedProduct()">Guardar cambios</button>
+                <button class="btn" type="button" id="product-modify-save-btn" onclick="saveModifiedProduct()">Guardar cambios</button>
                 <button class="btn" type="button" onclick="clearProductModifyForm()">Limpiar</button>
                 <button class="btn" type="button" onclick="cancelProductOperation('modify')">Cancelar</button>
             </div>

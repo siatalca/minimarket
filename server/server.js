@@ -138,6 +138,26 @@ function sumMovementAmounts(rows = [], options = {}) {
     .reduce((acc, row) => acc + toPositiveAmount(row?.[amountField], 0), 0);
 }
 
+function isCashMovementMethod(methodRaw = '') {
+  const method = String(methodRaw || '').trim().toLowerCase();
+  // Compatibilidad legacy: movimientos antiguos sin metodo se consideran efectivo.
+  return !method || method === 'efectivo';
+}
+
+function sumCashExitMovementAmounts(rows = [], field = 'total') {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.tipo || '').trim().toLowerCase() === 'salida')
+    .filter((row) => isCashMovementMethod(row?.metodo))
+    .reduce((acc, row) => acc + toPositiveAmount(row?.[field], 0), 0);
+}
+
+function sumTransferExitMovementAmounts(rows = [], field = 'total') {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => String(row?.tipo || '').trim().toLowerCase() === 'salida')
+    .filter((row) => String(row?.metodo || '').trim().toLowerCase() === 'transferencia')
+    .reduce((acc, row) => acc + toPositiveAmount(row?.[field], 0), 0);
+}
+
 function roundToDecimals(value, decimals = 2) {
   const num = toNumber(value);
   if (num === null) return null;
@@ -3910,8 +3930,8 @@ async function bootstrapDatabase() {
 }
 
 function startApiServer() {
-  const server = app.listen(config.apiPort, () => {
-    console.log('El servidor se esta ejecutando en el puerto ', config.apiPort);
+  const server = app.listen(config.apiPort, config.apiHost, () => {
+    console.log(`El servidor se esta ejecutando en ${config.apiHost}:${config.apiPort}`);
   });
 
   server.on('error', (err) => {
@@ -7691,16 +7711,13 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       method: 'efectivo',
       field: 'total',
     });
-    const salidasDinero = sumMovementAmounts(movementSummaryRows, {
-      type: 'salida',
-      method: 'efectivo',
-      field: 'total',
-    });
+    const salidasDinero = sumCashExitMovementAmounts(movementSummaryRows, 'total');
+    const salidasTransferencia = sumTransferExitMovementAmounts(movementSummaryRows, 'total');
     const devoluciones = movementSummaryRows
       .filter((row) => String(row.tipo || '').toLowerCase().includes('devol'))
       .reduce((acc, row) => acc + Number(row.total || 0), 0);
     const totalEntradas = sumMovementAmounts(movementDetailRows, { type: 'entrada', field: 'monto' });
-    const totalSalidas = sumMovementAmounts(movementDetailRows, { type: 'salida', field: 'monto' });
+    const totalSalidas = salidasDinero;
     const totalVentas = Number(totalsRows[0]?.total || 0);
     const totalTransacciones = Number(totalsRows[0]?.transacciones || 0);
     const efectivoEnCaja = shiftInitialAmount + efectivoVentas + abonosEfectivo + entradasDinero - salidasDinero;
@@ -7721,6 +7738,7 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       abonos_efectivo: abonosEfectivo,
       entradas_dinero: entradasDinero,
       salidas_dinero: salidasDinero,
+      salidas_transferencia: salidasTransferencia,
       efectivo_en_caja: efectivoEnCaja,
       devoluciones,
       total_entradas: totalEntradas,
@@ -7735,7 +7753,22 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
           descripcion: String(row.descripcion || '').trim(),
         })),
       detalle_salidas: movementDetailRows
-        .filter((row) => String(row.tipo || '').toLowerCase() === 'salida')
+        .filter((row) =>
+          String(row.tipo || '').toLowerCase() === 'salida'
+          && isCashMovementMethod(row.metodo)
+        )
+        .map((row) => ({
+          fecha: row.fecha,
+          tipo: row.tipo,
+          metodo: row.metodo,
+          monto: toPositiveAmount(row.monto, 0),
+          descripcion: String(row.descripcion || '').trim(),
+        })),
+      detalle_salidas_referencia: movementDetailRows
+        .filter((row) =>
+          String(row.tipo || '').toLowerCase() === 'salida'
+          && !isCashMovementMethod(row.metodo)
+        )
         .map((row) => ({
           fecha: row.fecha,
           tipo: row.tipo,
@@ -8006,16 +8039,13 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
       method: 'efectivo',
       field: 'total',
     });
-    const salidasDinero = sumMovementAmounts(movementSummaryRows, {
-      type: 'salida',
-      method: 'efectivo',
-      field: 'total',
-    });
+    const salidasDinero = sumCashExitMovementAmounts(movementSummaryRows, 'total');
+    const salidasTransferencia = sumTransferExitMovementAmounts(movementSummaryRows, 'total');
     const devoluciones = movementSummaryRows
       .filter((row) => String(row.tipo || '').toLowerCase().includes('devol'))
       .reduce((acc, row) => acc + Number(row.total || 0), 0);
     const totalEntradas = sumMovementAmounts(movementDetailRows, { type: 'entrada', field: 'monto' });
-    const totalSalidas = sumMovementAmounts(movementDetailRows, { type: 'salida', field: 'monto' });
+    const totalSalidas = salidasDinero;
     const efectivoEnCaja = shiftInitialAmount + efectivoVentas + abonosEfectivo + entradasDinero - salidasDinero;
 
     const cutPayload = {
@@ -8034,6 +8064,7 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
       abonos_efectivo: abonosEfectivo,
       entradas_dinero: entradasDinero,
       salidas_dinero: salidasDinero,
+      salidas_transferencia: salidasTransferencia,
       efectivo_en_caja: efectivoEnCaja,
       devoluciones,
       total_entradas: totalEntradas,
@@ -8048,7 +8079,22 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
           descripcion: String(row.descripcion || '').trim(),
         })),
       detalle_salidas: movementDetailRows
-        .filter((row) => String(row.tipo || '').toLowerCase() === 'salida')
+        .filter((row) =>
+          String(row.tipo || '').toLowerCase() === 'salida'
+          && isCashMovementMethod(row.metodo)
+        )
+        .map((row) => ({
+          fecha: row.fecha,
+          tipo: row.tipo,
+          metodo: row.metodo,
+          monto: toPositiveAmount(row.monto, 0),
+          descripcion: String(row.descripcion || '').trim(),
+        })),
+      detalle_salidas_referencia: movementDetailRows
+        .filter((row) =>
+          String(row.tipo || '').toLowerCase() === 'salida'
+          && !isCashMovementMethod(row.metodo)
+        )
         .map((row) => ({
           fecha: row.fecha,
           tipo: row.tipo,
@@ -8220,12 +8266,14 @@ app.post('/api/print/cut-format-test', async (req, res) => {
       abonos_efectivo: abonosEfectivo,
       entradas_dinero: entradasDinero,
       salidas_dinero: salidasDinero,
+      salidas_transferencia: 0,
       efectivo_en_caja: efectivoEnCaja,
       devoluciones,
       total_entradas: entradasDinero,
       total_salidas: salidasDinero,
       detalle_entradas: sampleEntryDetails,
       detalle_salidas: sampleExitDetails,
+      detalle_salidas_referencia: [],
       method_totals: [
         { metodo_pago: 'efectivo', total: 28500 },
         { metodo_pago: 'tarjeta', total: 12900 },
@@ -8848,6 +8896,7 @@ async function calculateShiftTotalsByTurno(turnoId, executor = db) {
       totalMixto: 0,
       entradasDinero: 0,
       salidasDinero: 0,
+      salidasTransferencia: 0,
       abonosEfectivo: 0,
     };
   }
@@ -8896,7 +8945,8 @@ async function calculateShiftTotalsByTurno(turnoId, executor = db) {
     method: 'efectivo',
     field: 'total',
   });
-  const salidasDinero = sumMovementAmounts(movementRows, { type: 'salida', method: 'efectivo', field: 'total' });
+  const salidasDinero = sumCashExitMovementAmounts(movementRows, 'total');
+  const salidasTransferencia = sumTransferExitMovementAmounts(movementRows, 'total');
   const abonosEfectivo = sumMovementAmounts(movementRows, { type: 'abono', method: 'efectivo', field: 'total' });
 
   return {
@@ -8908,6 +8958,7 @@ async function calculateShiftTotalsByTurno(turnoId, executor = db) {
     totalMixto,
     entradasDinero,
     salidasDinero,
+    salidasTransferencia,
     abonosEfectivo,
   };
 }
@@ -9143,6 +9194,280 @@ app.get('/api/corte/historial', async (req, res) => {
     return res.json(rows);
   } catch (error) {
     console.error('Error al consultar historial de cortes:', error);
+    return res.status(500).json({ message: 'Error interno del servidor' });
+  }
+});
+
+app.get('/api/corte/historial/detalle', async (req, res) => {
+  const cutId = toInt(req.query?.id_corte);
+  if (!cutId) {
+    return res.status(400).json({ message: 'id_corte es obligatorio' });
+  }
+
+  try {
+    const [cutRows] = await db.query(
+      `SELECT c.id_corte,
+              DATE_FORMAT(c.fecha, '%Y-%m-%d') AS fecha_iso,
+              c.caja_id,
+              c.usuario_id,
+              c.hora_apertura,
+              c.hora_cierre,
+              c.monto_inicial,
+              c.estado,
+              COALESCE(u.nombre, CONCAT('Cajero ', c.usuario_id)) AS cajero_nombre
+       FROM corte_caja c
+       LEFT JOIN usuarios u ON u.id = c.usuario_id
+       WHERE c.id_corte = ?
+       LIMIT 1`,
+      [cutId]
+    );
+    if (!cutRows.length) {
+      return res.status(404).json({ message: 'Corte historico no encontrado' });
+    }
+
+    const selectedCut = cutRows[0];
+    const targetCutId = Number(selectedCut.id_corte || 0);
+    const targetCajaId = Number(selectedCut.caja_id || 0);
+    const targetCajeroId = Number(selectedCut.usuario_id || 0);
+    const targetDateIso = String(selectedCut.fecha_iso || '').slice(0, 10);
+    const shiftOpenAt = selectedCut.hora_apertura || `${targetDateIso} 00:00:00`;
+    const shiftCloseAt = selectedCut.hora_cierre || null;
+    const shiftInitialAmount = Number(selectedCut.monto_inicial || 0);
+    const shiftEstado = String(selectedCut.estado || 'cerrado').toLowerCase();
+
+    if (!targetCutId || !targetCajaId || !targetCajeroId || !targetDateIso) {
+      return res.status(400).json({ message: 'No se pudo reconstruir el detalle del corte' });
+    }
+
+    const salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
+    const salesParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
+    const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
+    const movementParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
+
+    const [summaryRows] = await db.query(
+      `SELECT vp.metodo_pago, COUNT(DISTINCT v.id_venta) AS transacciones, COALESCE(SUM(vp.monto), 0) AS total
+       FROM ventas v
+       INNER JOIN venta_pagos vp ON vp.venta_id = v.id_venta
+       WHERE ${salesWhere}
+       GROUP BY vp.metodo_pago
+       ORDER BY FIELD(vp.metodo_pago, 'efectivo', 'tarjeta', 'dolares', 'transferencia', 'cheque', 'vale', 'otro'), vp.metodo_pago ASC`,
+      salesParams
+    );
+    const [totalsRows] = await db.query(
+      `SELECT COUNT(*) AS transacciones, COALESCE(SUM(v.total), 0) AS total
+       FROM ventas v
+       WHERE ${salesWhere}`,
+      salesParams
+    );
+    const [detailRows] = await db.query(
+      `SELECT v.id_venta, DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') AS fecha,
+              COALESCE(NULLIF(v.folio_ticket, ''), CAST(v.numero_ticket AS CHAR)) AS numero_ticket,
+              v.metodo_pago AS metodo_venta,
+              vp.metodo_pago, vp.monto AS total
+       FROM ventas v
+       INNER JOIN venta_pagos vp ON vp.venta_id = v.id_venta
+       WHERE ${salesWhere}
+       ORDER BY v.fecha ASC, v.id_venta ASC,
+                FIELD(vp.metodo_pago, 'efectivo', 'tarjeta', 'dolares', 'transferencia', 'cheque', 'vale', 'otro')
+       LIMIT 1000`,
+      salesParams
+    );
+
+    const mixedSalesWhere = `${salesWhere} AND ${buildMixedSaleConditionSql('v')}`;
+    const [mixedSalesRowsRaw] = await db.query(
+      `SELECT
+         v.id_venta,
+         DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') AS fecha,
+         COALESCE(NULLIF(v.folio_ticket, ''), CAST(v.numero_ticket AS CHAR)) AS numero_ticket,
+         ${buildCashAmountSql('v')} AS efectivo,
+         ${buildCardAmountSql('v')} AS tarjeta,
+         v.total
+       FROM ventas v
+       WHERE ${mixedSalesWhere}
+       ORDER BY v.fecha ASC, v.id_venta ASC
+       LIMIT 1000`,
+      salesParams
+    );
+    const mixedSalesRows = (Array.isArray(mixedSalesRowsRaw) ? mixedSalesRowsRaw : []).map((row) => ({
+      id_venta: Number(row.id_venta || 0),
+      fecha: String(row.fecha || '').trim(),
+      numero_ticket: String(row.numero_ticket || '').trim(),
+      efectivo: toPositiveAmount(row.efectivo, 0),
+      tarjeta: toPositiveAmount(row.tarjeta, 0),
+      total: toPositiveAmount(row.total, 0),
+    }));
+    const [mixedSummaryRows] = await db.query(
+      `SELECT
+         COUNT(*) AS ventas_mixtas,
+         COALESCE(SUM(${buildCashAmountSql('v')}), 0) AS efectivo_mixto,
+         COALESCE(SUM(${buildCardAmountSql('v')}), 0) AS tarjeta_mixto,
+         COALESCE(SUM(v.total), 0) AS total_mixto
+       FROM ventas v
+       WHERE ${mixedSalesWhere}`,
+      salesParams
+    );
+    const mixedSummaryRow = Array.isArray(mixedSummaryRows) && mixedSummaryRows[0]
+      ? mixedSummaryRows[0]
+      : {};
+    const mixedSummary = {
+      count: toPositiveAmount(mixedSummaryRow.ventas_mixtas, 0),
+      efectivo: toPositiveAmount(mixedSummaryRow.efectivo_mixto, 0),
+      tarjeta: toPositiveAmount(mixedSummaryRow.tarjeta_mixto, 0),
+      total: toPositiveAmount(mixedSummaryRow.total_mixto, 0),
+      ventas_mixtas: toPositiveAmount(mixedSummaryRow.ventas_mixtas, 0),
+      efectivo_mixto: toPositiveAmount(mixedSummaryRow.efectivo_mixto, 0),
+      tarjeta_mixto: toPositiveAmount(mixedSummaryRow.tarjeta_mixto, 0),
+      total_mixto: toPositiveAmount(mixedSummaryRow.total_mixto, 0),
+    };
+
+    const [profitRows] = await db.query(
+      `SELECT COALESCE(SUM((d.precio_unitario - COALESCE(p.costo, 0)) * d.cantidad), 0) AS ganancia
+       FROM detalle_venta d
+       INNER JOIN ventas v ON v.id_venta = d.venta_id
+       LEFT JOIN productos p ON p.id_producto = d.producto_id
+       WHERE ${salesWhere}`,
+      salesParams
+    );
+    const [departmentRows] = await db.query(
+      `SELECT dep.id_departamento,
+              dep.nombre AS departamento,
+              COALESCE(SUM(
+                CASE
+                  WHEN v.id_venta IS NOT NULL THEN d.subtotal
+                  ELSE 0
+                END
+              ), 0) AS total_vendido,
+              COALESCE(SUM(
+                CASE
+                  WHEN v.id_venta IS NOT NULL THEN (d.precio_unitario - COALESCE(p.costo, 0)) * d.cantidad
+                  ELSE 0
+                END
+              ), 0) AS ganancia
+       FROM departamento dep
+       LEFT JOIN productos p
+              ON p.id_departamento = dep.id_departamento
+       LEFT JOIN detalle_venta d
+              ON d.producto_id = p.id_producto
+       LEFT JOIN ventas v
+              ON v.id_venta = d.venta_id
+             AND ${salesWhere}
+       GROUP BY dep.id_departamento, dep.nombre
+       ORDER BY dep.nombre ASC`,
+      salesParams
+    );
+    const [topProductsByDepartmentRows] = await db.query(
+      `SELECT COALESCE(dep.nombre, 'Sin departamento') AS departamento,
+              COALESCE(NULLIF(p.descripcion, ''), NULLIF(d.descripcion, ''), 'Producto') AS producto,
+              COALESCE(SUM(d.cantidad), 0) AS cantidad_vendida
+       FROM detalle_venta d
+       INNER JOIN ventas v ON v.id_venta = d.venta_id
+       LEFT JOIN productos p ON p.id_producto = d.producto_id
+       LEFT JOIN departamento dep ON dep.id_departamento = p.id_departamento
+       WHERE ${salesWhere}
+       GROUP BY COALESCE(dep.nombre, 'Sin departamento'),
+                COALESCE(NULLIF(p.descripcion, ''), NULLIF(d.descripcion, ''), 'Producto')
+       HAVING COALESCE(SUM(d.cantidad), 0) > 0
+       ORDER BY departamento ASC, cantidad_vendida DESC, producto ASC`,
+      salesParams
+    );
+
+    const [movementSummaryRows] = await db.query(
+      `SELECT m.tipo, m.metodo, COUNT(*) AS transacciones, COALESCE(SUM(m.monto), 0) AS total
+       FROM cash_movements m
+       WHERE ${movementWhere}
+       GROUP BY m.tipo, m.metodo`,
+      movementParams
+    );
+    const [movementDetailRows] = await db.query(
+      `SELECT DATE_FORMAT(m.fecha, '%Y-%m-%d %H:%i:%s') AS fecha,
+              m.tipo, m.metodo, m.monto, COALESCE(m.descripcion, '') AS descripcion
+       FROM cash_movements m
+       WHERE ${movementWhere}
+       ORDER BY m.fecha ASC, m.id_movimiento ASC
+       LIMIT 500`,
+      movementParams
+    );
+
+    const [cashAndCardRows] = await db.query(
+      `SELECT
+         COALESCE(SUM(${buildCashAmountSql('v')}), 0) AS total_efectivo,
+         COALESCE(SUM(${buildCardAmountSql('v')}), 0) AS total_tarjeta
+       FROM ventas v
+       WHERE ${salesWhere}`,
+      salesParams
+    );
+    const efectivoVentas = Number(cashAndCardRows[0]?.total_efectivo || 0);
+    const tarjetaVentas = Number(cashAndCardRows[0]?.total_tarjeta || 0);
+
+    const abonosEfectivo = sumMovementAmounts(movementDetailRows, {
+      type: 'abono',
+      method: 'efectivo',
+      field: 'monto',
+    });
+    const entradasDinero = sumMovementAmounts(movementSummaryRows, {
+      type: 'entrada',
+      method: 'efectivo',
+      field: 'total',
+    });
+    const salidasDinero = sumCashExitMovementAmounts(movementSummaryRows, 'total');
+    const salidasTransferencia = sumTransferExitMovementAmounts(movementSummaryRows, 'total');
+    const salidasNoCaja = (Array.isArray(movementSummaryRows) ? movementSummaryRows : [])
+      .filter((row) => String(row?.tipo || '').trim().toLowerCase() === 'salida')
+      .filter((row) => !isCashMovementMethod(row?.metodo))
+      .reduce((acc, row) => acc + toPositiveAmount(row?.total, 0), 0);
+
+    const totalVentas = Number(totalsRows[0]?.total || 0);
+    const totalGanancia = Number(profitRows[0]?.ganancia || 0);
+    const esperadoEfectivo = shiftInitialAmount + efectivoVentas + abonosEfectivo + entradasDinero - salidasDinero;
+    const dineroEnCaja = shiftInitialAmount + efectivoVentas + abonosEfectivo + entradasDinero - salidasDinero;
+
+    return res.json({
+      scope: 'historical',
+      turno_id: targetCutId,
+      fecha: targetDateIso,
+      hora_apertura: selectedCut.hora_apertura,
+      hora_cierre: selectedCut.hora_cierre,
+      monto_inicial: shiftInitialAmount,
+      esperado_efectivo: esperadoEfectivo,
+      esperado_tarjeta: tarjetaVentas,
+      resumen: summaryRows,
+      totales: totalsRows[0] || { transacciones: 0, total: 0 },
+      detalle: detailRows,
+      ventas_mixtas: mixedSalesRows,
+      resumen_mixto: mixedSummary,
+      resumen_financiero: {
+        fondo_caja: shiftInitialAmount,
+        ventas_efectivo: efectivoVentas,
+        ventas_tarjeta: tarjetaVentas,
+        abonos_efectivo: abonosEfectivo,
+        entradas_dinero: entradasDinero,
+        salidas_dinero: salidasDinero,
+        salidas_transferencia: salidasTransferencia,
+        salidas_no_caja: salidasNoCaja,
+        ventas_totales_dinero_en_caja: dineroEnCaja,
+        ganancia_ventas: totalGanancia,
+        total_vendido: totalVentas,
+      },
+      movimientos: {
+        resumen: movementSummaryRows,
+        detalle_ingresos: movementDetailRows.filter((row) => {
+          const type = String(row.tipo || '').trim().toLowerCase();
+          return type === 'abono' || type === 'entrada';
+        }),
+        detalle_salidas: movementDetailRows.filter((row) => String(row.tipo || '').trim().toLowerCase() === 'salida'),
+      },
+      departamentos: departmentRows,
+      top_productos_departamento: topProductsByDepartmentRows,
+      corte: {
+        id_corte: targetCutId,
+        caja_id: targetCajaId,
+        usuario_id: targetCajeroId,
+        cajero_nombre: String(selectedCut.cajero_nombre || '').trim() || `Cajero ${targetCajeroId}`,
+        estado: shiftEstado,
+      },
+    });
+  } catch (error) {
+    console.error('Error al consultar detalle de corte historico:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
   }
 });
@@ -9795,6 +10120,7 @@ app.post('/api/corte/merge', async (req, res) => {
           total_mixto: shiftTotals.totalMixto,
           entradas_dinero: shiftTotals.entradasDinero,
           salidas_dinero: shiftTotals.salidasDinero,
+          salidas_transferencia: shiftTotals.salidasTransferencia,
           abonos_efectivo: shiftTotals.abonosEfectivo,
           monto_inicial: baseInitialAmount,
           monto_declarado: efectivoEsperado,
@@ -9853,6 +10179,7 @@ app.post('/api/corte/merge', async (req, res) => {
           total_efectivo: shiftTotals.totalEfectivo,
           total_tarjeta: shiftTotals.totalTarjeta,
           total_mixto: shiftTotals.totalMixto,
+          salidas_transferencia: shiftTotals.salidasTransferencia,
           monto_inicial: baseInitialAmount,
           monto_declarado: efectivoEsperado,
           monto_declarado_tarjeta: tarjetaEsperada,
@@ -10726,11 +11053,12 @@ app.get('/api/turno/resumen', async (req, res) => {
       method: 'efectivo',
       field: 'total',
     });
-    const salidasDinero = sumMovementAmounts(movementSummaryRows, {
-      type: 'salida',
-      method: 'efectivo',
-      field: 'total',
-    });
+    const salidasDinero = sumCashExitMovementAmounts(movementSummaryRows, 'total');
+    const salidasTransferencia = sumTransferExitMovementAmounts(movementSummaryRows, 'total');
+    const salidasNoCaja = (Array.isArray(movementSummaryRows) ? movementSummaryRows : [])
+      .filter((row) => String(row?.tipo || '').trim().toLowerCase() === 'salida')
+      .filter((row) => !isCashMovementMethod(row?.metodo))
+      .reduce((acc, row) => acc + toPositiveAmount(row?.total, 0), 0);
 
     const totalVentas = Number(totalsRows[0]?.total || 0);
     const totalGanancia = Number(profitRows[0]?.ganancia || 0);
@@ -10757,6 +11085,8 @@ app.get('/api/turno/resumen', async (req, res) => {
         abonos_efectivo: abonosEfectivo,
         entradas_dinero: entradasDinero,
         salidas_dinero: salidasDinero,
+        salidas_transferencia: salidasTransferencia,
+        salidas_no_caja: salidasNoCaja,
         ventas_totales_dinero_en_caja: dineroEnCaja,
         ganancia_ventas: totalGanancia,
         total_vendido: totalVentas,
@@ -12077,7 +12407,8 @@ app.post('/api/corte/cerrar', async (req, res) => {
       method: 'efectivo',
       field: 'total',
     });
-    const salidasDinero = sumMovementAmounts(movementRows, { type: 'salida', method: 'efectivo', field: 'total' });
+    const salidasDinero = sumCashExitMovementAmounts(movementRows, 'total');
+    const salidasTransferencia = sumTransferExitMovementAmounts(movementRows, 'total');
     const abonosEfectivo = sumMovementAmounts(movementRows, { type: 'abono', method: 'efectivo', field: 'total' });
 
     const [cutSettingRows] = await db.query('SELECT cut_mode FROM personalization_settings WHERE id = 1 LIMIT 1');
@@ -12154,6 +12485,7 @@ app.post('/api/corte/cerrar', async (req, res) => {
       total_tarjeta: totalTarjeta,
       total_mixto: totalMixto,
       efectivo_esperado: efectivoEsperado,
+      salidas_transferencia: salidasTransferencia,
       monto_inicial: montoInicialTurno,
       monto_declarado: montoDeclarado,
       monto_declarado_tarjeta: montoDeclaradoTarjeta,

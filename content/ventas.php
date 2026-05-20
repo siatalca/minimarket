@@ -12,8 +12,11 @@
     <!-- FILA: Código + botón -->
     <div class="form-row sales-scan-row">
         <label for="barcode" class="form-label">Código de producto</label>
-        <input type="text" id="barcode" list="sales-barcode-suggestions" class="form-input"  autocomplete="off" oninput="if (typeof handleBarcodeInputSanitize === 'function') { handleBarcodeInputSanitize(this); } if (typeof updateSalesBarcodeSuggestions === 'function') { updateSalesBarcodeSuggestions(this.value); }" onchange="if (typeof handleSalesBarcodeSelectionChange === 'function') { handleSalesBarcodeSelectionChange(this.value); }" onkeydown="if (typeof handleBarcodeKeydown === 'function') { handleBarcodeKeydown(event, this); }" placeholder="Escanea o ingresa el código">
-        <datalist id="sales-barcode-suggestions"></datalist>
+        <div class="sales-barcode-input-wrap">
+            <input type="text" id="barcode" class="form-input" autocomplete="off" oninput="if (typeof handleBarcodeInputSanitize === 'function') { handleBarcodeInputSanitize(this); } if (typeof updateSalesBarcodeSuggestions === 'function') { updateSalesBarcodeSuggestions(this.value); }" onkeydown="if (typeof handleBarcodeKeydown === 'function') { handleBarcodeKeydown(event, this); }" placeholder="Escanea o ingresa el código">
+            <datalist id="sales-barcode-suggestions"></datalist>
+            <div id="sales-barcode-suggest-panel" class="sales-barcode-suggest-panel hidden" role="listbox" aria-label="Sugerencias de productos"></div>
+        </div>
         <button id="searchCode" type="button" class="btn sales-scan-btn" onclick="addToCart()">ENTER - Agregar producto</button>
         <button id="sales-camera-scan-btn" class="btn sales-scan-btn sales-mobile-camera-btn" type="button" onclick="openSalesCameraScanPopup()">Escanear cámara</button>
     </div>

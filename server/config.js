@@ -42,6 +42,7 @@ const effectiveJwtSecret = env.JWT_SECRET || getPersistentLocalJwtSecret();
 
 const config = {
   env: env.NODE_ENV || 'development',
+  apiHost: env.API_HOST || '0.0.0.0',
   apiPort: Number.parseInt(env.PORT, 10) || 3002,
   db: {
     host: env.DB_HOST || 'localhost',

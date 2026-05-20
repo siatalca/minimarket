@@ -415,6 +415,8 @@ let bulkProductPopupContext = null;
 let bulkProductLastEditedField = null;
 let salesBarcodeSuggestDebounceTimer = null;
 let salesBarcodeSuggestCodes = new Set();
+let salesBarcodeSuggestRows = [];
+let salesBarcodeSuggestActiveIndex = -1;
 const SALES_CAMERA_PERMISSION_KEY = 'sales_camera_permission_prompt_v1';
 let salesCameraPermissionInFlight = false;
 let salesCameraScanStream = null;
@@ -1728,6 +1730,15 @@ function formatCutReferenceCountSuffix(value) {
     return countText ? ` (${countText})` : '';
 }
 
+function normalizeCutMovementMethod(methodRaw = '') {
+    return String(methodRaw || '').trim().toLowerCase();
+}
+
+function isCashCutMovementMethod(methodRaw = '') {
+    const method = normalizeCutMovementMethod(methodRaw);
+    return !method || method === 'efectivo';
+}
+
 function writeCutReferenceText(id, text) {
     const node = document.getElementById(id);
     if (!node) return;
@@ -1743,6 +1754,7 @@ function renderCutReferenceSummaryValues(values = {}) {
     const mixedCard = Number(values.mixedCard || 0);
     const entryTotal = Number(values.entryTotal || 0);
     const exitTotal = Number(values.exitTotal || 0);
+    const exitTransferTotal = Number(values.exitTransferTotal || 0);
     const cashTotal = Number(values.cashTotal || 0);
     const cardTotal = Number(values.cardTotal || 0);
     const transferTotal = Number(values.transferTotal || 0);
@@ -1778,6 +1790,10 @@ function renderCutReferenceSummaryValues(values = {}) {
     writeCutReferenceText(
         'cut-ref-exit-total',
         `Salidas efectivo: -${formatCutReferenceCurrency(exitTotal)}`
+    );
+    writeCutReferenceText(
+        'cut-ref-exit-transfer-total',
+        `Salidas transferencia (referencia): ${formatCutReferenceCurrency(exitTransferTotal)}`
     );
     writeCutReferenceText(
         'cut-ref-cash-total',
@@ -1941,6 +1957,129 @@ function applyHistoricalCutToView(row) {
     refreshCutCloseButtonState();
 }
 
+async function fetchHistoricalCutDetailById(cutId) {
+    const parsedCutId = Number(cutId || 0);
+    if (!Number.isFinite(parsedCutId) || parsedCutId <= 0) {
+        throw new Error('Corte historico invalido.');
+    }
+    const query = new URLSearchParams({ id_corte: String(parsedCutId) });
+    const response = await fetch(API_URL + `api/corte/historial/detalle?${query.toString()}`, {
+        headers: withAuthHeaders(),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data || typeof data !== 'object') {
+        throw new Error(data?.message || 'No se pudo cargar el detalle del corte historico.');
+    }
+    return data;
+}
+
+async function applyHistoricalCutDetailedView(row) {
+    const selected = row || {};
+    const cutId = Number(selected.id_corte || 0);
+    if (!Number.isFinite(cutId) || cutId <= 0) {
+        applyHistoricalCutToView(selected);
+        return;
+    }
+
+    const scopeInfo = document.getElementById('cut-close-scope-info');
+    const breakdownList = document.getElementById('cut-close-breakdown');
+    const detailBody = document.getElementById('cut-close-detail-body');
+    if (scopeInfo) {
+        scopeInfo.textContent = `Cargando detalle del corte historico #${cutId}...`;
+    }
+
+    try {
+        const data = await fetchHistoricalCutDetailById(cutId);
+        let paymentSettings = [];
+        try {
+            paymentSettings = await fetchPaymentSettingsForCut();
+        } catch (_) {
+            paymentSettings = [];
+        }
+
+        renderCutEnabledPaymentBreakdown(
+            data.resumen || [],
+            paymentSettings,
+            'sesion historica',
+            data.resumen_financiero || {},
+            data.resumen_mixto || {},
+            data.detalle || [],
+            data.ventas_mixtas || [],
+            data?.movimientos?.resumen || [],
+            data?.movimientos?.detalle_salidas || []
+        );
+        renderCutFinancialSections(data);
+
+        const totalVentas = Number(data.totales?.total || data.resumen_financiero?.total_vendido || 0);
+        const totalTx = Number(data.totales?.transacciones || 0);
+        const dateIso = String(data.fecha || selected.fecha || cutCloseContext.currentDate || new Date().toISOString().slice(0, 10)).trim();
+        const estado = String(data?.corte?.estado || selected.estado || 'cerrado').trim().toLowerCase() || 'cerrado';
+        const cashierName = String(data?.corte?.cajero_nombre || selected.cajero_nombre || getCurrentCutCashierLabel()).trim() || getCurrentCutCashierLabel();
+
+        updateCutHeadline({
+            cashierName,
+            dateIso,
+            startTime: data.hora_apertura || selected.hora_apertura || '',
+            endTime: data.hora_cierre || selected.hora_cierre || '',
+            statusText: estado === 'cerrado' ? 'Turno cerrado' : 'Turno abierto',
+        });
+        updateCutSessionContext({ visible: false });
+
+        const cutSummary = document.getElementById('cut-summary');
+        if (cutSummary) {
+            cutSummary.textContent = `Corte historico #${cutId} | ${totalTx.toFixed(0)} ventas | Total $${totalVentas.toFixed(0)}`;
+        }
+
+        if (scopeInfo) {
+            scopeInfo.textContent = `Mostrando corte historico #${cutId} del ${formatCutDateForHeader(dateIso)}.`;
+        }
+        if (breakdownList) {
+            breakdownList.innerHTML = '';
+            const li = document.createElement('li');
+            li.textContent = `Cajero: ${cashierName} | Caja: ${data?.corte?.caja_id || selected.caja_id || '-'} | Estado: ${estado}`;
+            breakdownList.appendChild(li);
+        }
+        if (detailBody) {
+            detailBody.innerHTML = '';
+            (data.detalle || []).forEach((detailRow) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${detailRow.fecha || ''}</td>
+                    <td>${detailRow.numero_ticket || ''}</td>
+                    <td>${normalizeSalesPaymentMethodLabel(detailRow.metodo_pago || detailRow.metodo_venta || '')}</td>
+                    <td style="text-align:right;">${Number(detailRow.total || 0).toFixed(0)}</td>
+                `;
+                detailBody.appendChild(tr);
+            });
+            if (!data.detalle || data.detalle.length === 0) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td colspan="4" style="text-align:center;">Sin ventas para este corte.</td>';
+                detailBody.appendChild(tr);
+            }
+        }
+
+        cutCloseContext.scope = 'historical';
+        cutCloseContext.resumenLoaded = false;
+        cutCloseContext.sessionResumenLoaded = false;
+        cutCloseContext.esperadoEfectivo = Number(data.esperado_efectivo || 0);
+        cutCloseContext.esperadoTarjeta = Number(data.esperado_tarjeta || 0);
+        cutCloseContext.currentDate = dateIso;
+        cutCloseContext.sessionReportSnapshot = {
+            data,
+            paymentSettings,
+            loadedAt: new Date().toISOString(),
+        };
+        cutCloseContext.historicalCutId = cutId;
+        refreshCutCloseButtonState();
+    } catch (error) {
+        console.error('Error loading historical cut detail:', error);
+        applyHistoricalCutToView(selected);
+        if (scopeInfo) {
+            scopeInfo.textContent = `Mostrando corte historico resumido. ${error.message || ''}`.trim();
+        }
+    }
+}
+
 function renderCutHistoryPopupRows(rows) {
     const body = document.getElementById('cut-history-body');
     if (!body) return;
@@ -1969,9 +2108,9 @@ function renderCutHistoryPopupRows(rows) {
         body.appendChild(tr);
         const btn = document.getElementById(actionId);
         if (btn) {
-            btn.addEventListener('click', () => {
-                applyHistoricalCutToView(cutHistoryContext.rows[index] || row);
+            btn.addEventListener('click', async () => {
                 closeCutHistoryPopup();
+                await applyHistoricalCutDetailedView(cutHistoryContext.rows[index] || row);
             });
         }
     });
@@ -3383,7 +3522,9 @@ function renderCutEnabledPaymentBreakdown(
     financialSummary = {},
     mixedSummary = {},
     detailRows = [],
-    mixedRows = []
+    mixedRows = [],
+    movementSummaryRows = [],
+    movementExitRows = []
 ) {
     const cutSummary = document.getElementById('cut-summary');
     const cutBreakdown = document.getElementById('cut-breakdown');
@@ -3446,6 +3587,21 @@ function renderCutEnabledPaymentBreakdown(
     const financialCashAbonos = Number(financialSummary?.abonos_efectivo ?? 0);
     const financialEntries = Number(financialSummary?.entradas_dinero ?? 0);
     const financialExits = Number(financialSummary?.salidas_dinero ?? 0);
+    const financialTransferExitsRaw = Number(financialSummary?.salidas_transferencia ?? 0);
+    const fallbackTransferExitsFromSummary = (Array.isArray(movementSummaryRows) ? movementSummaryRows : [])
+        .filter((row) => String(row?.tipo || '').toLowerCase().trim() === 'salida')
+        .filter((row) => normalizeCutMovementMethod(row?.metodo) === 'transferencia')
+        .reduce((acc, row) => acc + Number(row?.total || 0), 0);
+    const fallbackTransferExitsFromDetail = (Array.isArray(movementExitRows) ? movementExitRows : [])
+        .filter((row) => String(row?.tipo || '').toLowerCase().trim() === 'salida')
+        .filter((row) => normalizeCutMovementMethod(row?.metodo) === 'transferencia')
+        .reduce((acc, row) => acc + Number(row?.monto || 0), 0);
+    const fallbackTransferExits = (Array.isArray(movementExitRows) ? movementExitRows : []).length > 0
+        ? fallbackTransferExitsFromDetail
+        : fallbackTransferExitsFromSummary;
+    const financialTransferExits = financialTransferExitsRaw > 0
+        ? financialTransferExitsRaw
+        : Math.max(0, Number(fallbackTransferExits || 0));
     const financialCashInBox = Number(financialSummary?.ventas_totales_dinero_en_caja);
     const mixedTotals = resolveCutMixedTotals({
         summaryRows: normalizedSummaryRows,
@@ -3518,6 +3674,7 @@ function renderCutEnabledPaymentBreakdown(
         mixedCard,
         entryTotal: financialEntries,
         exitTotal: financialExits,
+        exitTransferTotal: financialTransferExits,
         cashTotal: computedCashTotal,
         cashTotalTx: baseCashSummary.tx + (hasLegacyMixtoSummary && mixedCash > 0 ? normalizedMixedCount : 0),
         cardTotal: computedCardTotal,
@@ -3881,18 +4038,33 @@ function renderCutFinancialSections(data = {}, options = {}) {
     const fallbackSalidasEfectivoSummary = movementSummary
         .filter((row) =>
             String(row.tipo || '').toLowerCase() === 'salida'
-            && String(row.metodo || '').toLowerCase() === 'efectivo'
+            && isCashCutMovementMethod(row.metodo)
         )
         .reduce((acc, row) => acc + Number(row.total || 0), 0);
     const fallbackSalidasEfectivoDetail = movementExitDetailRows
         .filter((row) =>
             String(row.tipo || '').toLowerCase() === 'salida'
-            && String(row.metodo || '').toLowerCase() === 'efectivo'
+            && isCashCutMovementMethod(row.metodo)
         )
         .reduce((acc, row) => acc + Number(row.monto || 0), 0);
     const fallbackSalidasEfectivo = movementExitDetailRows.length > 0
         ? fallbackSalidasEfectivoDetail
         : (summaryHasExitMethodBreakdown ? fallbackSalidasEfectivoSummary : fallbackSalidasTotal);
+    const fallbackSalidasTransferenciaSummary = movementSummary
+        .filter((row) =>
+            String(row.tipo || '').toLowerCase() === 'salida'
+            && normalizeCutMovementMethod(row.metodo) === 'transferencia'
+        )
+        .reduce((acc, row) => acc + Number(row.total || 0), 0);
+    const fallbackSalidasTransferenciaDetail = movementExitDetailRows
+        .filter((row) =>
+            String(row.tipo || '').toLowerCase() === 'salida'
+            && normalizeCutMovementMethod(row.metodo) === 'transferencia'
+        )
+        .reduce((acc, row) => acc + Number(row.monto || 0), 0);
+    const fallbackSalidasTransferencia = movementExitDetailRows.length > 0
+        ? fallbackSalidasTransferenciaDetail
+        : fallbackSalidasTransferenciaSummary;
     const fallbackAbonos = movementSummary
         .filter((row) => String(row.tipo || '').toLowerCase() === 'abono')
         .reduce((acc, row) => acc + Number(row.total || 0), 0);
@@ -3908,6 +4080,7 @@ function renderCutFinancialSections(data = {}, options = {}) {
     const abonosEfectivo = Number(financial.abonos_efectivo ?? fallbackAbonos);
     const entradasDinero = Number(financial.entradas_dinero ?? fallbackEntradas);
     const salidasDinero = Number(financial.salidas_dinero ?? fallbackSalidasEfectivo);
+    const salidasTransferencia = Number(financial.salidas_transferencia ?? fallbackSalidasTransferencia);
     const devolucionesVentas = Number(financial.devoluciones_ventas ?? financial.devoluciones ?? fallbackDevoluciones);
     const totalVendido = Number(financial.total_vendido ?? fallbackTotalVendido);
     const gananciaVentas = Number(financial.ganancia_ventas ?? fallbackGanancia);
@@ -4029,6 +4202,7 @@ function renderCutFinancialSections(data = {}, options = {}) {
             `Abonos en efectivo: ${formatCurrency(abonosEfectivo)}`,
             `Entradas de efectivo: ${formatSignedCurrency(entradasDinero, '+')}`,
             `Salidas de efectivo: ${formatSignedCurrency(salidasDinero, '-')}`,
+            `Salidas por transferencia (referencia): ${formatCurrency(salidasTransferencia)} (no descuenta caja)`,
         ].forEach((text) => {
             const li = document.createElement('li');
             li.textContent = text;
@@ -6145,12 +6319,162 @@ function handleBarcodeInputSanitize(inputEl) {
 }
 window.handleBarcodeInputSanitize = handleBarcodeInputSanitize;
 
+function getSalesBarcodeSuggestionPanel() {
+    return document.getElementById('sales-barcode-suggest-panel');
+}
+
+function isSalesBarcodeSuggestionPanelVisible() {
+    const panel = getSalesBarcodeSuggestionPanel();
+    return Boolean(panel && !panel.classList.contains('hidden'));
+}
+
+function setSalesBarcodeSuggestionActiveIndex(index) {
+    const panel = getSalesBarcodeSuggestionPanel();
+    const rows = Array.isArray(salesBarcodeSuggestRows) ? salesBarcodeSuggestRows : [];
+    if (!panel || !rows.length) {
+        salesBarcodeSuggestActiveIndex = -1;
+        return;
+    }
+    const bounded = Math.max(0, Math.min(rows.length - 1, Number(index || 0)));
+    salesBarcodeSuggestActiveIndex = bounded;
+    panel.querySelectorAll('.sales-barcode-suggest-option').forEach((optionEl, optionIndex) => {
+        const isActive = optionIndex === bounded;
+        optionEl.classList.toggle('is-active', isActive);
+        optionEl.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+}
+
+function hideSalesBarcodeSuggestionPanel(options = {}) {
+    const panel = getSalesBarcodeSuggestionPanel();
+    if (panel) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+    }
+    salesBarcodeSuggestActiveIndex = -1;
+    if (options.keepRows) return;
+    salesBarcodeSuggestRows = [];
+}
+
+function renderSalesBarcodeSuggestionPanel(rows) {
+    const panel = getSalesBarcodeSuggestionPanel();
+    if (!panel) return;
+    const normalizedRows = (Array.isArray(rows) ? rows : []).slice(0, 20);
+    salesBarcodeSuggestRows = normalizedRows;
+    salesBarcodeSuggestActiveIndex = -1;
+
+    panel.innerHTML = '';
+    if (!normalizedRows.length) {
+        panel.classList.add('hidden');
+        return;
+    }
+
+    normalizedRows.forEach((row, index) => {
+        const description = String(row?.descripcion || '').trim();
+        const code = String(row?.codigo_barras || '').trim();
+        const price = Number(row?.precio_venta || 0);
+        if (!description || !code) return;
+
+        const optionBtn = document.createElement('button');
+        optionBtn.type = 'button';
+        optionBtn.className = 'sales-barcode-suggest-option';
+        optionBtn.setAttribute('role', 'option');
+        optionBtn.setAttribute('aria-selected', 'false');
+        optionBtn.dataset.index = String(index);
+
+        const codeEl = document.createElement('div');
+        codeEl.className = 'sales-barcode-suggest-code';
+        codeEl.textContent = code;
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'sales-barcode-suggest-name';
+        nameEl.textContent = `${description} | $${price.toFixed(0)}`;
+
+        optionBtn.appendChild(codeEl);
+        optionBtn.appendChild(nameEl);
+        optionBtn.addEventListener('mouseenter', () => {
+            setSalesBarcodeSuggestionActiveIndex(index);
+        });
+        optionBtn.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            selectSalesBarcodeSuggestionByIndex(index, { addToSale: true });
+        });
+        panel.appendChild(optionBtn);
+    });
+
+    if (!panel.children.length) {
+        panel.classList.add('hidden');
+        salesBarcodeSuggestRows = [];
+        return;
+    }
+    panel.classList.remove('hidden');
+}
+
+function selectSalesBarcodeSuggestionByIndex(index, options = {}) {
+    const rows = Array.isArray(salesBarcodeSuggestRows) ? salesBarcodeSuggestRows : [];
+    const row = rows[index];
+    if (!row) return false;
+    const code = String(row.codigo_barras || '').trim();
+    if (!code) return false;
+
+    const barcodeInput = document.getElementById('barcode');
+    if (barcodeInput) {
+        barcodeInput.value = code;
+    }
+    hideSalesBarcodeSuggestionPanel();
+
+    if (options.addToSale) {
+        addToCart();
+        return true;
+    }
+
+    if (barcodeInput) {
+        try {
+            barcodeInput.focus({ preventScroll: true });
+            barcodeInput.select?.();
+        } catch (_) {
+        }
+    }
+    return true;
+}
+
+function moveSalesBarcodeSuggestionActive(delta) {
+    const rows = Array.isArray(salesBarcodeSuggestRows) ? salesBarcodeSuggestRows : [];
+    if (!rows.length) return;
+    const total = rows.length;
+    const current = salesBarcodeSuggestActiveIndex;
+    const next = current < 0
+        ? (delta >= 0 ? 0 : total - 1)
+        : (current + delta + total) % total;
+    setSalesBarcodeSuggestionActiveIndex(next);
+
+    const panel = getSalesBarcodeSuggestionPanel();
+    const optionEl = panel?.querySelectorAll('.sales-barcode-suggest-option')?.[next];
+    optionEl?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function setupSalesBarcodeSuggestionPanel() {
+    const input = document.getElementById('barcode');
+    const panel = getSalesBarcodeSuggestionPanel();
+    if (!input || !panel) return;
+    if (panel.dataset.bound === '1') return;
+    panel.dataset.bound = '1';
+
+    document.addEventListener('pointerdown', (event) => {
+        if (!isSalesBarcodeSuggestionPanelVisible()) return;
+        const target = event.target;
+        if (target === input) return;
+        if (panel.contains(target)) return;
+        hideSalesBarcodeSuggestionPanel();
+    }, true);
+}
+
 function clearSalesBarcodeSuggestions() {
     const listEl = document.getElementById('sales-barcode-suggestions');
     if (listEl) {
         listEl.innerHTML = '';
     }
     salesBarcodeSuggestCodes = new Set();
+    hideSalesBarcodeSuggestionPanel();
 }
 
 async function performSalesBarcodeSuggestionSearch(queryText) {
@@ -6160,6 +6484,7 @@ async function performSalesBarcodeSuggestionSearch(queryText) {
     const query = String(queryText || '').trim();
     if (!query || query.length < 2) {
         listEl.innerHTML = '';
+        hideSalesBarcodeSuggestionPanel();
         return;
     }
 
@@ -6176,19 +6501,17 @@ async function performSalesBarcodeSuggestionSearch(queryText) {
 
         listEl.innerHTML = '';
         salesBarcodeSuggestCodes = new Set();
+        const suggestionRows = [];
         normalizedRows.slice(0, 20).forEach((row) => {
             const description = String(row.descripcion || '').trim();
             const code = String(row.codigo_barras || '').trim();
             if (!description || !code) return;
-            const option = document.createElement('option');
-            option.value = code;
-            const price = Number(row.precio_venta || 0);
-            option.label = `${description} | $${price.toFixed(0)}`;
-            listEl.appendChild(option);
+            suggestionRows.push(row);
             salesBarcodeSuggestCodes.add(code);
         });
+        renderSalesBarcodeSuggestionPanel(suggestionRows);
     } catch (_) {
-        // noop
+        hideSalesBarcodeSuggestionPanel();
     }
 }
 
@@ -6212,6 +6535,7 @@ function handleSalesBarcodeSelectionChange(value) {
     const selectedValue = String(value || '').trim();
     if (!selectedValue) return;
     if (!salesBarcodeSuggestCodes.has(selectedValue)) return;
+    hideSalesBarcodeSuggestionPanel();
     addToCart();
 }
 window.handleSalesBarcodeSelectionChange = handleSalesBarcodeSelectionChange;
@@ -6465,6 +6789,36 @@ function handleBarcodeKeydown(event, inputEl) {
     if (!event) return;
     if (inputEl) {
         handleBarcodeInputSanitize(inputEl);
+    }
+    if (isSalesBarcodeSuggestionPanelVisible()) {
+        const rows = Array.isArray(salesBarcodeSuggestRows) ? salesBarcodeSuggestRows : [];
+        const key = String(event.key || '');
+        if (key === 'ArrowDown') {
+            event.preventDefault();
+            event.stopPropagation();
+            moveSalesBarcodeSuggestionActive(1);
+            return;
+        }
+        if (key === 'ArrowUp') {
+            event.preventDefault();
+            event.stopPropagation();
+            moveSalesBarcodeSuggestionActive(-1);
+            return;
+        }
+        if (key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            hideSalesBarcodeSuggestionPanel();
+            return;
+        }
+        if (key === 'Enter' && rows.length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            const index = salesBarcodeSuggestActiveIndex >= 0 ? salesBarcodeSuggestActiveIndex : 0;
+            if (selectSalesBarcodeSuggestionByIndex(index, { addToSale: true })) {
+                return;
+            }
+        }
     }
     const suffix = scannerRuntimeSettings.scanner_suffix || 'enter';
     if (suffix === 'none') {
@@ -9397,6 +9751,19 @@ function clearInventoryAdjustView() {
     setInventoryAdjustFeedback('Escanea un producto para ajustar inventario.', 'info');
 }
 
+function focusInventoryFlowStart(mode = 'add') {
+    const targetId = mode === 'adjust' ? 'inventory-adjust-qty' : 'inventory-restock-qty';
+    const input = document.getElementById(targetId);
+    if (!input || input.disabled || input.closest('.hidden')) return;
+    setTimeout(() => {
+        try {
+            input.focus();
+            if (typeof input.select === 'function') input.select();
+        } catch (_) {
+        }
+    }, 0);
+}
+
 function cancelInventoryEdition() {
     clearInventoryView();
     setInventoryNewScanInputLocked(false, { focus: true });
@@ -9685,6 +10052,7 @@ async function loadInventoryProductByCode() {
         selectedInventoryProduct = product;
         setInventoryNewScanInputLocked(true);
         setInventoryFeedback(`Producto cargado: ${normalizeText(product.descripcion || '')}.`, 'ok');
+        focusInventoryFlowStart('add');
     } catch (error) {
         console.error('Error loadInventoryProductByCode:', error);
         clearInventoryProductDetails();
@@ -9734,6 +10102,7 @@ async function loadInventoryAdjustProductByCode() {
         selectedInventoryAdjustProduct = product;
         setInventoryAdjustScanInputLocked(true);
         setInventoryAdjustFeedback(`Producto cargado: ${normalizeText(product.descripcion || '')}.`, 'ok');
+        focusInventoryFlowStart('adjust');
     } catch (error) {
         console.error('Error loadInventoryAdjustProductByCode:', error);
         clearInventoryAdjustProductDetails();
@@ -10914,18 +11283,33 @@ function buildCutSessionReceiptHtml(snapshot = {}, options = {}) {
     const fallbackSalidasEfectivoSummary = movementSummaryRows
         .filter((row) =>
             String(row.tipo || '').toLowerCase() === 'salida'
-            && String(row.metodo || '').toLowerCase() === 'efectivo'
+            && isCashCutMovementMethod(row.metodo)
         )
         .reduce((acc, row) => acc + Number(row.total || 0), 0);
     const fallbackSalidasEfectivoDetail = movementExpenseRows
         .filter((row) =>
             String(row.tipo || '').toLowerCase() === 'salida'
-            && String(row.metodo || '').toLowerCase() === 'efectivo'
+            && isCashCutMovementMethod(row.metodo)
         )
         .reduce((acc, row) => acc + Number(row.monto || 0), 0);
     const fallbackSalidasEfectivo = movementExpenseRows.length > 0
         ? fallbackSalidasEfectivoDetail
         : (summaryHasExitMethodBreakdown ? fallbackSalidasEfectivoSummary : fallbackSalidasTotal);
+    const fallbackSalidasTransferenciaSummary = movementSummaryRows
+        .filter((row) =>
+            String(row.tipo || '').toLowerCase() === 'salida'
+            && normalizeCutMovementMethod(row.metodo) === 'transferencia'
+        )
+        .reduce((acc, row) => acc + Number(row.total || 0), 0);
+    const fallbackSalidasTransferenciaDetail = movementExpenseRows
+        .filter((row) =>
+            String(row.tipo || '').toLowerCase() === 'salida'
+            && normalizeCutMovementMethod(row.metodo) === 'transferencia'
+        )
+        .reduce((acc, row) => acc + Number(row.monto || 0), 0);
+    const fallbackSalidasTransferencia = movementExpenseRows.length > 0
+        ? fallbackSalidasTransferenciaDetail
+        : fallbackSalidasTransferenciaSummary;
     const fallbackAbonos = movementSummaryRows
         .filter((row) => String(row.tipo || '').toLowerCase() === 'abono')
         .reduce((acc, row) => acc + Number(row.total || 0), 0);
@@ -10935,6 +11319,7 @@ function buildCutSessionReceiptHtml(snapshot = {}, options = {}) {
     const abonosEfectivo = Number(financial.abonos_efectivo ?? fallbackAbonos);
     const entradasDinero = Number(financial.entradas_dinero ?? fallbackEntradas);
     const salidasDinero = Number(financial.salidas_dinero ?? fallbackSalidasEfectivo);
+    const salidasTransferencia = Number(financial.salidas_transferencia ?? fallbackSalidasTransferencia);
     const efectivoEnCaja = Number(
         financial.ventas_totales_dinero_en_caja
         ?? (fondoCaja + ventasEfectivo + abonosEfectivo + entradasDinero - salidasDinero)
@@ -10945,7 +11330,7 @@ function buildCutSessionReceiptHtml(snapshot = {}, options = {}) {
     const totalEntradas = movementIncomeRows
         .filter((row) => String(row.tipo || '').toLowerCase() === 'entrada')
         .reduce((acc, row) => acc + Number(row.monto || 0), 0);
-    const totalSalidas = movementExpenseRows.reduce((acc, row) => acc + Number(row.monto || 0), 0);
+    const totalSalidas = salidasDinero;
 
     const methodTotals = new Map();
     summaryRows.forEach((row) => {
@@ -11036,6 +11421,7 @@ function buildCutSessionReceiptHtml(snapshot = {}, options = {}) {
     ${lineHtml('ABONOS EN EFECTIVO', `+ ${money(abonosEfectivo)}`)}
     ${lineHtml('ENTRADAS', `+ ${money(entradasDinero)}`)}
     ${lineHtml('SALIDAS', `- ${money(salidasDinero)}`)}
+    ${lineHtml('SALIDAS TRANSF. (REFERENCIA)', money(salidasTransferencia))}
     <div class="separator"></div>
     ${lineHtml('EFECTIVO EN CAJA', money(efectivoEnCaja), true)}
 
@@ -11459,7 +11845,9 @@ async function loadCutSummaryForClose(scope = 'session', options = {}) {
             data.resumen_financiero || {},
             data.resumen_mixto || {},
             data.detalle || [],
-            data.ventas_mixtas || []
+            data.ventas_mixtas || [],
+            data?.movimientos?.resumen || [],
+            data?.movimientos?.detalle_salidas || []
         );
         if (scope === 'session') {
             renderCutFinancialSections(data);
@@ -13102,6 +13490,16 @@ function fillModifyFormFromProduct(product) {
     const searchInput = document.getElementById('product-modify-search');
     if (searchInput) searchInput.disabled = true;
     setModifyFormVisibility(true);
+    const descriptionInput = document.getElementById('product-edit-name');
+    if (descriptionInput) {
+        setTimeout(() => {
+            try {
+                descriptionInput.focus();
+                descriptionInput.select();
+            } catch (_) {
+            }
+        }, 0);
+    }
 }
 
 function fillDeleteInfo(product) {
@@ -15181,13 +15579,228 @@ async function prepareShoppingView() {
 }
 
 function setupAddProductCodeGuard() {
-    const codeInput = document.getElementById('product-code');
-    if (!codeInput) return;
-    codeInput.addEventListener('keydown', async (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        await handleExistingProductCodeOnAdd(true);
-    });
+    const isEnterFlowControlEnabled = (control) => {
+        if (!control) return false;
+        if (control.disabled) return false;
+        if (String(control.type || '').toLowerCase() === 'hidden') return false;
+        if (control.closest('.hidden')) return false;
+        return true;
+    };
+
+    const focusEnterFlowControl = (control) => {
+        if (!isEnterFlowControlEnabled(control)) return;
+        try {
+            control.focus();
+            const tag = String(control.tagName || '').toLowerCase();
+            const type = String(control.type || '').toLowerCase();
+            if (tag === 'input' && type !== 'checkbox' && type !== 'radio' && typeof control.select === 'function') {
+                control.select();
+            }
+        } catch (_) {
+        }
+    };
+
+    const getCurrentRadioFlowControl = (name, fallbackId) => {
+        const checked = document.querySelector(`input[name="${name}"]:checked`);
+        return checked || document.getElementById(fallbackId);
+    };
+
+    const getAddProductEnterFlow = () => {
+        const flow = [
+            document.getElementById('product-code'),
+            document.getElementById('product-name'),
+            getCurrentRadioFlowControl('formato_venta', 'radio-unidad'),
+            document.getElementById('product-costo'),
+            document.getElementById('product-ganancia'),
+            document.getElementById('product-price'),
+            document.getElementById('product-department-add'),
+            document.getElementById('product-supplier'),
+            document.getElementById('product-tax-exempt'),
+            document.getElementById('product-use-inventory'),
+            document.getElementById('product-quantity'),
+            document.getElementById('product-quantity-min'),
+            document.getElementById('product-quantity-max'),
+            document.getElementById('product-add-save-btn'),
+        ];
+        return flow.filter(isEnterFlowControlEnabled);
+    };
+
+    const getModifyProductEnterFlow = () => {
+        const flow = [
+            document.getElementById('product-edit-name'),
+            document.getElementById('product-edit-code'),
+            getCurrentRadioFlowControl('formato_venta_edit', 'radio-edit-unidad'),
+            document.getElementById('product-edit-cost'),
+            document.getElementById('product-edit-profit'),
+            document.getElementById('product-edit-price'),
+            document.getElementById('product-department-edit'),
+            document.getElementById('product-supplier-edit'),
+            document.getElementById('product-edit-tax-exempt'),
+            document.getElementById('product-edit-use-inventory'),
+            document.getElementById('product-modify-save-btn'),
+        ];
+        return flow.filter(isEnterFlowControlEnabled);
+    };
+
+    const resolveFlowControlFromTarget = (target, flow) => {
+        if (!target || typeof target !== 'object' || !('closest' in target)) return null;
+        return flow.find((control) => control === target || (typeof control.contains === 'function' && control.contains(target)));
+    };
+
+    const focusNextFlowControl = (flow, currentControl) => {
+        const index = flow.indexOf(currentControl);
+        if (index < 0) return;
+        const next = flow[index + 1];
+        if (next) focusEnterFlowControl(next);
+    };
+
+    const addSection = document.getElementById('add');
+    if (addSection) {
+        addSection.addEventListener('keydown', async (event) => {
+            if (event.key !== 'Enter') return;
+            const flow = getAddProductEnterFlow();
+            if (!flow.length) return;
+            const currentControl = resolveFlowControlFromTarget(event.target, flow);
+            if (!currentControl) return;
+            event.preventDefault();
+
+            if (currentControl.id === 'product-add-save-btn') {
+                currentControl.click();
+                return;
+            }
+
+            if (currentControl.id === 'product-code') {
+                const alreadyHandled = await handleExistingProductCodeOnAdd(true);
+                if (alreadyHandled) return;
+            }
+
+            focusNextFlowControl(flow, currentControl);
+        });
+    }
+
+    const modifySection = document.getElementById('modify');
+    if (modifySection) {
+        modifySection.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            const targetId = String(event?.target?.id || '');
+            if (targetId === 'product-modify-search') return;
+            const flow = getModifyProductEnterFlow();
+            if (!flow.length) return;
+            const currentControl = resolveFlowControlFromTarget(event.target, flow);
+            if (!currentControl) return;
+            event.preventDefault();
+
+            if (currentControl.id === 'product-modify-save-btn') {
+                currentControl.click();
+                return;
+            }
+
+            focusNextFlowControl(flow, currentControl);
+        });
+    }
+}
+
+function setupInventoryEnterFlowNavigation() {
+    const isEnterFlowControlEnabled = (control) => {
+        if (!control) return false;
+        if (control.disabled) return false;
+        if (String(control.type || '').toLowerCase() === 'hidden') return false;
+        if (control.closest('.hidden')) return false;
+        return true;
+    };
+
+    const focusEnterFlowControl = (control) => {
+        if (!isEnterFlowControlEnabled(control)) return;
+        try {
+            control.focus();
+            const tag = String(control.tagName || '').toLowerCase();
+            const type = String(control.type || '').toLowerCase();
+            if (tag === 'input' && type !== 'checkbox' && type !== 'radio' && typeof control.select === 'function') {
+                control.select();
+            }
+        } catch (_) {
+        }
+    };
+
+    const resolveFlowControlFromTarget = (target, flow) => {
+        if (!target || typeof target !== 'object' || !('closest' in target)) return null;
+        return flow.find((control) => control === target || (typeof control.contains === 'function' && control.contains(target)));
+    };
+
+    const focusNextFlowControl = (flow, currentControl) => {
+        const index = flow.indexOf(currentControl);
+        if (index < 0) return;
+        const next = flow[index + 1];
+        if (next) focusEnterFlowControl(next);
+    };
+
+    const getInventoryAddFlow = () => {
+        const flow = [
+            document.getElementById('inventory-restock-qty'),
+            document.getElementById('inventory-product-cost'),
+            document.getElementById('inventory-product-profit'),
+            document.getElementById('inventory-product-sale'),
+            document.getElementById('inventory-stock-min'),
+            document.getElementById('inventory-stock-max'),
+            document.getElementById('inventory-save-btn'),
+        ];
+        return flow.filter(isEnterFlowControlEnabled);
+    };
+
+    const getInventoryAdjustFlow = () => {
+        const flow = [
+            document.getElementById('inventory-adjust-qty'),
+            document.getElementById('inventory-adjust-new-stock'),
+            document.getElementById('inventory-adjust-note'),
+            document.getElementById('inventory-adjust-cost'),
+            document.getElementById('inventory-adjust-profit'),
+            document.getElementById('inventory-adjust-sale'),
+            document.getElementById('inventory-adjust-save-btn'),
+        ];
+        return flow.filter(isEnterFlowControlEnabled);
+    };
+
+    const addSection = document.getElementById('inventory-nuevo-content');
+    if (addSection) {
+        addSection.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            const targetId = String(event?.target?.id || '');
+            if (targetId === 'inventory-code-input') return;
+            const flow = getInventoryAddFlow();
+            if (!flow.length) return;
+            const currentControl = resolveFlowControlFromTarget(event.target, flow);
+            if (!currentControl) return;
+            event.preventDefault();
+
+            if (currentControl.id === 'inventory-save-btn') {
+                currentControl.click();
+                return;
+            }
+
+            focusNextFlowControl(flow, currentControl);
+        });
+    }
+
+    const adjustSection = document.getElementById('inventory-ajustar-content');
+    if (adjustSection) {
+        adjustSection.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            const targetId = String(event?.target?.id || '');
+            if (targetId === 'inventory-adjust-code-input') return;
+            const flow = getInventoryAdjustFlow();
+            if (!flow.length) return;
+            const currentControl = resolveFlowControlFromTarget(event.target, flow);
+            if (!currentControl) return;
+            event.preventDefault();
+
+            if (currentControl.id === 'inventory-adjust-save-btn') {
+                currentControl.click();
+                return;
+            }
+
+            focusNextFlowControl(flow, currentControl);
+        });
+    }
 }
 
 function setupPromotionSelectorUI() {
@@ -15246,8 +15859,10 @@ document.addEventListener('DOMContentLoaded', () => {
     applyUserPermissionsToUI();
     applyAdminSiaOnlyProductsActionsVisibility();
     setSalesEnabledByShift(false);
+    setupSalesBarcodeSuggestionPanel();
     setupProductSearchAutocomplete();
     setupAddProductCodeGuard();
+    setupInventoryEnterFlowNavigation();
     setupDepartmentNameUppercase();
     setupPromotionSelectorUI();
     setupCartQuantityKeyboardShortcuts();

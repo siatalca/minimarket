@@ -949,6 +949,7 @@
                                         <div class="cut-ref-block-title">Movimientos de caja</div>
                                         <div id="cut-ref-entry-total" class="cut-ref-line">Entradas efectivo: +$0</div>
                                         <div id="cut-ref-exit-total" class="cut-ref-line">Salidas efectivo: -$0</div>
+                                        <div id="cut-ref-exit-transfer-total" class="cut-ref-line">Salidas transferencia (referencia): $0</div>
                                     </div>
                                     <div class="cut-ref-mixed-box">
                                         <div class="cut-ref-block-title">Detalle mixto</div>
