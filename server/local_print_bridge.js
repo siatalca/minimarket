@@ -67,6 +67,23 @@ function normalizeWindowsPrinterList(raw) {
     .filter((row) => row.name);
 }
 
+function dedupePrinterRows(printers = []) {
+  const unique = [];
+  const seen = new Set();
+  (Array.isArray(printers) ? printers : []).forEach((row) => {
+    const name = String(row?.name || '').trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push({
+      name,
+      isDefault: Boolean(row?.isDefault),
+    });
+  });
+  return unique;
+}
+
 function parseDefaultPrinterFromLpstat(raw) {
   const text = String(raw || '');
   const match = text.match(/system default destination:\s*(.+)\s*$/im);
@@ -110,8 +127,27 @@ function normalizePosixPrinterList(printersRaw, defaultRaw) {
 
 async function listLocalPrinters() {
   if (IS_WINDOWS) {
-    const output = await runPowerShell('Get-Printer | Select-Object Name, Default | ConvertTo-Json -Compress');
-    return normalizeWindowsPrinterList(output);
+    const attempts = [
+      'Get-Printer | Select-Object Name, Default | ConvertTo-Json -Compress',
+      'Get-CimInstance Win32_Printer | Select-Object Name, Default | ConvertTo-Json -Compress',
+      'Get-WmiObject Win32_Printer | Select-Object Name, Default | ConvertTo-Json -Compress',
+    ];
+    let lastError = null;
+    for (const command of attempts) {
+      try {
+        const output = await runPowerShell(command);
+        const printers = dedupePrinterRows(normalizeWindowsPrinterList(output));
+        if (printers.length > 0) {
+          return printers;
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (lastError) {
+      throw lastError;
+    }
+    return [];
   }
 
   let printersRaw = '';

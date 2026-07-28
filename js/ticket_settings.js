@@ -18,7 +18,8 @@ const LOCAL_PRINT_BRIDGE_CACHE_MS = 180000;
 
 function shouldForceLocalTicketPrinting() {
     const raw = String(localStorage.getItem('force_local_ticket_print') || '').trim().toLowerCase();
-    if (!raw) return false;
+    if (!raw) return true;
+    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
     return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'si';
 }
 
@@ -749,10 +750,17 @@ async function initPrinterForm() {
     let currentSettings = null;
     let localPrinterList = [];
 
+    function getNoBridgeHintMessage() {
+        if (shouldForceLocalTicketPrinting()) {
+            return 'No hay bridge local en esta caja. Ejecuta iniciar_servicios_ocultos.bat para listar impresoras e imprimir directo.';
+        }
+        return 'Sin bridge local: impresion por navegador usando impresora predeterminada del equipo cliente.';
+    }
+
     function applyNoLocalPrinterState(message = '') {
         setBrowserDefaultOption(select);
         if (hint) {
-            hint.textContent = message || 'No hay bridge local. Se usara impresion por navegador en la impresora predeterminada del equipo cliente.';
+            hint.textContent = message || getNoBridgeHintMessage();
         }
     }
 
@@ -783,7 +791,7 @@ async function initPrinterForm() {
         if (hint) {
             const sourceHint = localPrinterList.length
                 ? 'Lista de impresoras del equipo actual (bridge local activo).'
-                : 'Sin bridge local: impresion por navegador usando impresora predeterminada del equipo cliente.';
+                : getNoBridgeHintMessage();
             const profileHint = selectedPaperWidth === 58
                 ? (profile.isXp58
                     ? 'XP-58 detectada: ajusta entre 28 y 56 columnas segun legibilidad.'

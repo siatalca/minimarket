@@ -5490,7 +5490,8 @@ async function resolveLocalPrintBridgeBase(force = false) {
 
 function shouldForceLocalTicketPrinting() {
     const raw = String(localStorage.getItem('force_local_ticket_print') || '').trim().toLowerCase();
-    if (!raw) return false;
+    if (!raw) return true;
+    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
     return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'si';
 }
 
@@ -5767,9 +5768,11 @@ async function printTicketLocalFirst({
 }) {
     const bridgeBase = await resolveLocalPrintBridgeBase(true);
     const forceLocal = shouldForceLocalTicketPrinting();
+    const hasConfiguredPrinter = Boolean(String(payloadData?.printer || '').trim());
+    const requireLocalBridge = forceLocal || hasConfiguredPrinter;
     let localBridgeError = null;
 
-    if (forceLocal) {
+    if (requireLocalBridge) {
         if (!bridgeBase) {
             throw new Error(getLocalPrintBridgeRequiredMessage());
         }
@@ -5787,6 +5790,7 @@ async function printTicketLocalFirst({
                 mode: 'local',
             };
         } catch (error) {
+            localBridgeError = error;
             throw new Error(`No se pudo imprimir en la impresora local: ${error.message || 'Error de impresion local'}`);
         }
     }
