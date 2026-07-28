@@ -14510,6 +14510,9 @@ async function deleteSelectedCatalogProducts() {
 
     const deletedCodes = [];
     const failedProducts = [];
+    const selectedProductDetails = new Map(
+        catalogRowsCache.map((product) => [normalizeText(product.codigo_barras), product])
+    );
     for (const code of selectedCodes) {
         try {
             const response = await fetch(API_URL + `api/productos/${encodeURIComponent(code)}`, {
@@ -14532,11 +14535,38 @@ async function deleteSelectedCatalogProducts() {
     invalidatePromotionProductsCache({ refreshIfVisible: true });
     await loadCatalogTable();
 
+    let notificationError = '';
+    if (deletedCodes.length) {
+        try {
+            const notificationResponse = await fetch(API_URL + 'api/productos/catalog/deletion-notification', {
+                method: 'POST',
+                headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({
+                    products: deletedCodes.map((code) => ({
+                        codigo_barras: code,
+                        descripcion: normalizeText(selectedProductDetails.get(code)?.descripcion || ''),
+                    })),
+                }),
+            });
+            const notificationData = await notificationResponse.json().catch(() => ({}));
+            if (!notificationResponse.ok) {
+                notificationError = notificationData.message || 'No se pudo enviar el correo de notificación.';
+            }
+        } catch (_) {
+            notificationError = 'No se pudo conectar con el servicio para enviar el correo de notificación.';
+        }
+    }
+
     if (failedProducts.length) {
-        alert(`Se eliminaron ${deletedCodes.length} de ${selectedCodes.length} productos.\n\nNo eliminados:\n${failedProducts.join('\n')}`);
+        const mailMessage = notificationError ? `\n\nAviso de correo: ${notificationError}` : '';
+        alert(`Se eliminaron ${deletedCodes.length} de ${selectedCodes.length} productos.\n\nNo eliminados:\n${failedProducts.join('\n')}${mailMessage}`);
         return;
     }
-    alert(`${deletedCodes.length} producto${deletedCodes.length === 1 ? '' : 's'} eliminado${deletedCodes.length === 1 ? '' : 's'} correctamente.`);
+    if (notificationError) {
+        alert(`${deletedCodes.length} producto${deletedCodes.length === 1 ? '' : 's'} eliminado${deletedCodes.length === 1 ? '' : 's'} correctamente.\n\nAviso de correo: ${notificationError}`);
+        return;
+    }
+    alert(`${deletedCodes.length} producto${deletedCodes.length === 1 ? '' : 's'} eliminado${deletedCodes.length === 1 ? '' : 's'} correctamente.\n\nCorreo enviado a cvasquezc08@gmail.com.`);
 }
 
 function setupProductSearchAutocomplete() {

@@ -1094,6 +1094,108 @@ async function sendErrorEmailNow(subject, bodyText) {
   return true;
 }
 
+const PRODUCT_DELETION_EMAIL_TO = 'cvasquezc08@gmail.com';
+const PRODUCT_DELETION_TEMP_CC = 'oteizanicolas@gmail.com';
+const PRODUCT_DELETION_TEMP_CC_LAST_DATE = '2026-07-31';
+
+function shouldSendProductDeletionTemporaryCopy(date = new Date()) {
+  const dateParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Santiago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const partValue = (type) => dateParts.find((part) => part.type === type)?.value || '';
+  const santiagoDate = `${partValue('year')}-${partValue('month')}-${partValue('day')}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(santiagoDate)
+    && santiagoDate <= PRODUCT_DELETION_TEMP_CC_LAST_DATE;
+}
+
+function escapeProductDeletionEmailHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+async function sendProductDeletionEmail(products, requestedBy = '') {
+  const mailBundle = await resolveErrorMailTransport();
+  if (!mailBundle?.transport) {
+    throw new Error('SMTP no configurado');
+  }
+
+  const nodemailer = require('nodemailer');
+  const transporter = nodemailer.createTransport({
+    host: mailBundle.transport.host,
+    port: mailBundle.transport.port,
+    secure: mailBundle.transport.secure,
+    auth: mailBundle.transport.auth,
+  });
+  const deletedAt = new Date();
+  const rows = products.map((product, index) => (
+    `${index + 1}. ${product.descripcion || 'Sin descripción'} | Código: ${product.codigo_barras}`
+  ));
+  const actor = String(requestedBy || '').trim() || 'Usuario no identificado';
+  const deletedAtLabel = deletedAt.toLocaleString('es-CL', { timeZone: 'America/Santiago' });
+  const countLabel = `${products.length} producto${products.length === 1 ? '' : 's'}`;
+  const tableRowsHtml = products.map((product, index) => `
+    <tr>
+      <td style="padding:10px 12px; border:1px solid #d9e0e7; text-align:center;">${index + 1}</td>
+      <td style="padding:10px 12px; border:1px solid #d9e0e7;">${escapeProductDeletionEmailHtml(product.codigo_barras)}</td>
+      <td style="padding:10px 12px; border:1px solid #d9e0e7;">${escapeProductDeletionEmailHtml(product.descripcion || 'Sin descripción')}</td>
+    </tr>
+  `).join('');
+
+  await transporter.sendMail({
+    from: mailBundle.transport.from,
+    to: PRODUCT_DELETION_EMAIL_TO,
+    cc: shouldSendProductDeletionTemporaryCopy(deletedAt) ? PRODUCT_DELETION_TEMP_CC : undefined,
+    subject: `[Minimarket] ${products.length} producto${products.length === 1 ? '' : 's'} eliminado${products.length === 1 ? '' : 's'} del catálogo`,
+    text: [
+      'Se eliminaron productos del catálogo de Minimarket.',
+      '',
+      `Fecha: ${deletedAtLabel}`,
+      `Usuario: ${actor}`,
+      `Cantidad: ${products.length}`,
+      '',
+      'Productos eliminados:',
+      ...rows,
+    ].join('\n'),
+    html: `
+      <div style="margin:0; padding:24px; background:#f4f6f8; color:#263238; font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:720px; margin:0 auto; padding:28px; background:#ffffff; border:1px solid #dfe5ea; border-radius:8px;">
+          <h2 style="margin:0 0 16px; color:#1f4e78;">Productos eliminados del catálogo</h2>
+          <p style="margin:0 0 18px; line-height:1.6;">
+            Este correo informa que se realizó una limpieza del catálogo de productos de Minimarket.
+            En esta operación se eliminaron <strong>${escapeProductDeletionEmailHtml(countLabel)}</strong>.
+            A continuación se presenta el detalle de los productos eliminados.
+          </p>
+          <div style="margin:0 0 20px; padding:12px 16px; background:#eef5fb; border-left:4px solid #1f4e78;">
+            <div><strong>Fecha:</strong> ${escapeProductDeletionEmailHtml(deletedAtLabel)}</div>
+            <div style="margin-top:6px;"><strong>Usuario:</strong> ${escapeProductDeletionEmailHtml(actor)}</div>
+            <div style="margin-top:6px;"><strong>Total eliminado:</strong> ${products.length}</div>
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:14px;">
+            <thead>
+              <tr style="background:#1f4e78; color:#ffffff;">
+                <th style="width:55px; padding:10px 12px; border:1px solid #1f4e78;">N.º</th>
+                <th style="padding:10px 12px; border:1px solid #1f4e78; text-align:left;">Código</th>
+                <th style="padding:10px 12px; border:1px solid #1f4e78; text-align:left;">Descripción</th>
+              </tr>
+            </thead>
+            <tbody>${tableRowsHtml}</tbody>
+          </table>
+          <p style="margin:22px 0 0; color:#667782; font-size:12px;">
+            Mensaje generado automáticamente por el sistema Minimarket.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+}
+
 function queueErrorEmailReport(source, payload = {}) {
   const now = Date.now();
   if ((now - lastErrorEmailSentAt) < ERROR_EMAIL_COOLDOWN_MS) {
@@ -6661,6 +6763,33 @@ app.get('/api/productos/catalog', async (req, res) => {
     return res.json(rows);
   } catch (err) {
     return res.status(500).json({ error: 'No se pudo cargar el catalogo' });
+  }
+});
+
+app.post('/api/productos/catalog/deletion-notification', async (req, res) => {
+  const rawProducts = Array.isArray(req.body?.products) ? req.body.products.slice(0, 500) : [];
+  const products = rawProducts
+    .map((product) => ({
+      codigo_barras: toText(product?.codigo_barras, 80),
+      descripcion: toText(product?.descripcion, 240),
+    }))
+    .filter((product) => product.codigo_barras);
+
+  if (!products.length) {
+    return res.status(400).json({ message: 'No hay productos eliminados para notificar' });
+  }
+
+  try {
+    await sendProductDeletionEmail(products, req.user?.name);
+    return res.json({
+      message: `Correo enviado a ${PRODUCT_DELETION_EMAIL_TO}`,
+      notified: products.length,
+    });
+  } catch (err) {
+    console.error('Error enviando aviso de productos eliminados:', err);
+    return res.status(500).json({
+      message: 'Los productos fueron eliminados, pero no se pudo enviar el correo. Revisa la configuración SMTP en Notificar correo.',
+    });
   }
 });
 
