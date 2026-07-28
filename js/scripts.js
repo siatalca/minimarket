@@ -12575,6 +12575,7 @@ async function login(){
 let selectedProductForModify = null;
 let selectedProductForDelete = null;
 let selectedCatalogProductCode = '';
+let selectedCatalogProductCodes = new Set();
 let catalogRowsCache = [];
 let selectedPromotionProductIds = new Set();
 let promotionRowsCache = [];
@@ -14356,14 +14357,16 @@ function renderCatalogTableRows(rows) {
     body.innerHTML = '';
     if (!list.length) {
         body.innerHTML = '<tr><td colspan="7" style="text-align:center;">Sin datos.</td></tr>';
+        updateCatalogSelectionControls();
         return;
     }
     list.forEach((row) => {
         const tr = document.createElement('tr');
         const code = normalizeText(row.codigo_barras);
         const inventoryEnabled = Number(row.utiliza_inventario || 0) === 1 ? 'Si' : 'No';
+        const checked = selectedCatalogProductCodes.has(code) ? ' checked' : '';
         tr.innerHTML = `
-            <td style="text-align:center;"><input type="radio" name="catalog-selected" value="${escapeHtml(code)}"></td>
+            <td style="text-align:center;"><input type="checkbox" class="catalog-product-checkbox" value="${escapeHtml(code)}"${checked} aria-label="Seleccionar ${escapeHtml(normalizeText(row.descripcion) || code)}"></td>
             <td>${escapeHtml(code)}</td>
             <td>${escapeHtml(normalizeText(row.descripcion))}</td>
             <td>${Number(row.precio_venta || 0).toFixed(0)}</td>
@@ -14373,11 +14376,55 @@ function renderCatalogTableRows(rows) {
         `;
         body.appendChild(tr);
     });
-    body.querySelectorAll('input[name="catalog-selected"]').forEach((radio) => {
-        radio.addEventListener('change', () => {
-            selectedCatalogProductCode = String(radio.value || '');
+    body.querySelectorAll('.catalog-product-checkbox').forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+            const code = String(checkbox.value || '');
+            if (checkbox.checked) {
+                selectedCatalogProductCodes.add(code);
+                selectedCatalogProductCode = code;
+            } else {
+                selectedCatalogProductCodes.delete(code);
+                if (selectedCatalogProductCode === code) {
+                    selectedCatalogProductCode = Array.from(selectedCatalogProductCodes).at(-1) || '';
+                }
+            }
+            updateCatalogSelectionControls();
         });
     });
+    updateCatalogSelectionControls();
+}
+
+function updateCatalogSelectionControls() {
+    const selectedCount = selectedCatalogProductCodes.size;
+    const deleteButton = document.getElementById('catalog-delete-selected-btn');
+    if (deleteButton) {
+        deleteButton.disabled = selectedCount === 0;
+        deleteButton.textContent = `Eliminar selección (${selectedCount})`;
+    }
+
+    const visibleCheckboxes = Array.from(document.querySelectorAll('#catalog-table-body .catalog-product-checkbox'));
+    const visibleSelectedCount = visibleCheckboxes.filter((checkbox) => checkbox.checked).length;
+    const selectAll = document.getElementById('catalog-select-all');
+    if (selectAll) {
+        selectAll.checked = visibleCheckboxes.length > 0 && visibleSelectedCount === visibleCheckboxes.length;
+        selectAll.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleCheckboxes.length;
+        selectAll.disabled = visibleCheckboxes.length === 0;
+    }
+}
+
+function toggleAllVisibleCatalogProducts(checked) {
+    document.querySelectorAll('#catalog-table-body .catalog-product-checkbox').forEach((checkbox) => {
+        checkbox.checked = Boolean(checked);
+        const code = String(checkbox.value || '');
+        if (checkbox.checked) {
+            selectedCatalogProductCodes.add(code);
+            selectedCatalogProductCode = code;
+        } else {
+            selectedCatalogProductCodes.delete(code);
+        }
+    });
+    if (!selectedCatalogProductCodes.size) selectedCatalogProductCode = '';
+    updateCatalogSelectionControls();
 }
 
 function filterCatalogTable(queryValue) {
@@ -14404,6 +14451,7 @@ async function loadCatalogTable() {
         const rows = await response.json().catch(() => []);
         catalogRowsCache = Array.isArray(rows) ? rows : [];
         selectedCatalogProductCode = '';
+        selectedCatalogProductCodes.clear();
         const searchInput = document.getElementById('catalog-search-input');
         const query = normalizeText(searchInput?.value || '');
         if (query) {
@@ -14418,7 +14466,11 @@ async function loadCatalogTable() {
 }
 
 async function editSelectedCatalogProduct() {
-    const selected = selectedCatalogProductCode || String(document.querySelector('input[name="catalog-selected"]:checked')?.value || '');
+    if (selectedCatalogProductCodes.size > 1) {
+        alert('Para editar, deja seleccionado solamente un producto.');
+        return;
+    }
+    const selected = Array.from(selectedCatalogProductCodes)[0] || selectedCatalogProductCode;
     if (!selected) {
         alert('Selecciona un producto del catálogo.');
         return;
@@ -14427,6 +14479,64 @@ async function editSelectedCatalogProduct() {
     const search = document.getElementById('product-modify-search');
     if (search) search.value = selected;
     await loadProductForModify();
+}
+
+async function deleteSelectedCatalogProducts() {
+    const selectedCodes = Array.from(selectedCatalogProductCodes);
+    if (!selectedCodes.length) {
+        alert('Selecciona al menos un producto del catálogo.');
+        return;
+    }
+
+    const productLabel = `${selectedCodes.length} producto${selectedCodes.length === 1 ? '' : 's'} seleccionado${selectedCodes.length === 1 ? '' : 's'}`;
+    const confirmDelete = (typeof window.appConfirm === 'function')
+        ? await window.appConfirm(
+            `¿Eliminar ${productLabel} del catálogo? Esta acción no se puede deshacer.`,
+            'warning',
+            {
+                title: 'Confirmar eliminación',
+                okText: 'Eliminar selección',
+                cancelText: 'Cancelar',
+            }
+        )
+        : confirm(`¿Eliminar ${productLabel} del catálogo?`);
+    if (!confirmDelete) return;
+
+    const deleteButton = document.getElementById('catalog-delete-selected-btn');
+    if (deleteButton) {
+        deleteButton.disabled = true;
+        deleteButton.textContent = 'Eliminando...';
+    }
+
+    const deletedCodes = [];
+    const failedProducts = [];
+    for (const code of selectedCodes) {
+        try {
+            const response = await fetch(API_URL + `api/productos/${encodeURIComponent(code)}`, {
+                method: 'DELETE',
+                headers: withAuthHeaders(),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                failedProducts.push(`${code}: ${data.message || data.error || 'no se pudo eliminar'}`);
+                continue;
+            }
+            deletedCodes.push(code);
+            selectedCatalogProductCodes.delete(code);
+        } catch (_) {
+            failedProducts.push(`${code}: error de conexión`);
+        }
+    }
+
+    selectedCatalogProductCode = Array.from(selectedCatalogProductCodes).at(-1) || '';
+    invalidatePromotionProductsCache({ refreshIfVisible: true });
+    await loadCatalogTable();
+
+    if (failedProducts.length) {
+        alert(`Se eliminaron ${deletedCodes.length} de ${selectedCodes.length} productos.\n\nNo eliminados:\n${failedProducts.join('\n')}`);
+        return;
+    }
+    alert(`${deletedCodes.length} producto${deletedCodes.length === 1 ? '' : 's'} eliminado${deletedCodes.length === 1 ? '' : 's'} correctamente.`);
 }
 
 function setupProductSearchAutocomplete() {

@@ -186,6 +186,7 @@
         <div class="form-row form-actions">
             <button class="btn" type="button" onclick="loadCatalogTable()">Recargar cat&aacute;logo</button>
             <button class="btn" type="button" onclick="editSelectedCatalogProduct()">Editar seleccionado</button>
+            <button class="btn" id="catalog-delete-selected-btn" type="button" onclick="deleteSelectedCatalogProducts()" disabled>Eliminar selecci&oacute;n (0)</button>
         </div>
         <div class="form-row">
             <label for="catalog-search-input">Buscar por c&oacute;digo o descripci&oacute;n</label>
@@ -195,7 +196,9 @@
             <table class="venta-table product-table" style="margin:0;">
                 <thead>
                     <tr>
-                        <th style="width:50px;">Sel.</th>
+                        <th style="width:50px; text-align:center;">
+                            <input type="checkbox" id="catalog-select-all" onchange="toggleAllVisibleCatalogProducts(this.checked)" aria-label="Seleccionar todos los productos visibles" title="Seleccionar todos los visibles">
+                        </th>
                         <th>C&oacute;digo</th>
                         <th>Descripci&oacute;n</th>
                         <th>Precio</th>
