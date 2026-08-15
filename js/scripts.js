@@ -12608,7 +12608,7 @@ function isSessionAdminSiaUser() {
 
 function applyAdminSiaOnlyProductsActionsVisibility() {
     const canView = isSessionAdminSiaUser();
-    document.querySelectorAll('button[data-admin-sia-only="1"], a[data-admin-sia-only="1"], [role="button"][data-admin-sia-only="1"]').forEach((control) => {
+    document.querySelectorAll('[data-admin-sia-only="1"]').forEach((control) => {
         control.classList.toggle('hidden', !canView);
     });
 }

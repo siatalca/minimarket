@@ -232,6 +232,12 @@ function getPayload() {
         from_name: fromNameValue,
         owner_email: value('mail-owner-email').slice(0, 180),
         cc_emails: value('mail-cc-emails').slice(0, 500),
+        catalog_deletion_to: value('mail-catalog-to').slice(0, 180),
+        catalog_deletion_cc: value('mail-catalog-cc').slice(0, 180),
+        catalog_deletion_cc_expires_on: value('mail-catalog-cc-expires').slice(0, 10),
+        inventory_adjustment_to: value('mail-inventory-to').slice(0, 180),
+        inventory_adjustment_cc: value('mail-inventory-cc').slice(0, 180),
+        inventory_adjustment_cc_expires_on: value('mail-inventory-cc-expires').slice(0, 10),
     };
 }
 
@@ -246,6 +252,12 @@ function fillForm(data) {
     setValue('mail-from-name', data.from_name || '');
     setValue('mail-owner-email', data.owner_email || '');
     setValue('mail-cc-emails', data.cc_emails || '');
+    setValue('mail-catalog-to', data.catalog_deletion_to || 'cvasquezc08@gmail.com');
+    setValue('mail-catalog-cc', data.catalog_deletion_cc || '');
+    setValue('mail-catalog-cc-expires', data.catalog_deletion_cc_expires_on || '');
+    setValue('mail-inventory-to', data.inventory_adjustment_to || 'cvasquezc08@gmail.com');
+    setValue('mail-inventory-cc', data.inventory_adjustment_cc || '');
+    setValue('mail-inventory-cc-expires', data.inventory_adjustment_cc_expires_on || '');
     const inferred = inferProviderFromHost(data.smtp_host || '');
     setProviderUI(inferred);
     syncFromNameWithBusinessEmail();
@@ -263,6 +275,12 @@ function normalizeSettingsSnapshot(data = {}) {
         from_name: String(data.from_name || ''),
         owner_email: String(data.owner_email || ''),
         cc_emails: String(data.cc_emails || ''),
+        catalog_deletion_to: String(data.catalog_deletion_to || ''),
+        catalog_deletion_cc: String(data.catalog_deletion_cc || ''),
+        catalog_deletion_cc_expires_on: String(data.catalog_deletion_cc_expires_on || ''),
+        inventory_adjustment_to: String(data.inventory_adjustment_to || ''),
+        inventory_adjustment_cc: String(data.inventory_adjustment_cc || ''),
+        inventory_adjustment_cc_expires_on: String(data.inventory_adjustment_cc_expires_on || ''),
     };
 }
 
@@ -301,6 +319,12 @@ function setMailEditMode(enabled) {
         'mail-cc-emails',
         'mail-test-subject',
         'mail-test-message',
+        'mail-catalog-to',
+        'mail-catalog-cc',
+        'mail-catalog-cc-expires',
+        'mail-inventory-to',
+        'mail-inventory-cc',
+        'mail-inventory-cc-expires',
     ];
     editableIds.forEach((id) => {
         const el = document.getElementById(id);

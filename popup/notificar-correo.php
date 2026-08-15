@@ -21,6 +21,7 @@
         .mail-shell input[type="number"],
         .mail-shell input[type="email"],
         .mail-shell input[type="password"],
+        .mail-shell input[type="date"],
         .mail-shell select,
         .mail-shell textarea {
             width: 100%;
@@ -169,6 +170,20 @@
                     <div class="mail-row"><label for="mail-test-subject">Asunto prueba</label><input id="mail-test-subject" type="text" maxlength="180" value="Prueba de correo Minimarket"></div>
                     <div class="mail-row"><label for="mail-test-message">Mensaje prueba</label><textarea id="mail-test-message" maxlength="1200">Este es un correo de prueba del sistema Minimarket.</textarea></div>
 
+                    <div class="mail-row" style="border-top:1px solid #d1d5db; padding-top:12px; margin-top:12px;">
+                        <h3>Reportes administrativos</h3>
+                        <p class="mail-help">Estos destinatarios reciben avisos silenciosos del sistema. La copia deja de enviarse al finalizar la fecha indicada.</p>
+                    </div>
+                    <div class="mail-row"><label for="mail-catalog-to">Eliminaciones del catalogo: correo principal</label><input id="mail-catalog-to" type="email" maxlength="180" required></div>
+                    <div class="mail-inline">
+                        <div class="mail-row"><label for="mail-catalog-cc">Copia temporal</label><input id="mail-catalog-cc" type="email" maxlength="180"></div>
+                        <div class="mail-row"><label for="mail-catalog-cc-expires">Copia hasta</label><input id="mail-catalog-cc-expires" type="date"></div>
+                    </div>
+                    <div class="mail-row"><label for="mail-inventory-to">Ajustes o bajas de inventario: correo principal</label><input id="mail-inventory-to" type="email" maxlength="180" required></div>
+                    <div class="mail-inline">
+                        <div class="mail-row"><label for="mail-inventory-cc">Copia temporal</label><input id="mail-inventory-cc" type="email" maxlength="180"></div>
+                        <div class="mail-row"><label for="mail-inventory-cc-expires">Copia hasta</label><input id="mail-inventory-cc-expires" type="date"></div>
+                    </div>
                     <div class="mail-actions">
                         <button id="mail-edit-btn" type="button" class="btn" style="background:#1d4ed8; color:#fff; border:1px solid #1e40af;">Editar mail</button>
                         <button id="mail-cancel-edit-btn" type="button" class="btn" style="background:#64748b; color:#fff; border:1px solid #475569;">Cancelar edicion</button>
@@ -181,6 +196,6 @@
         </div>
     </div>
 
-    <script src="../js/email_notification_settings.js?v=20260222t"></script>
+    <script src="../js/email_notification_settings.js?v=20260814a"></script>
 </body>
 </html>

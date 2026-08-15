@@ -1,4 +1,4 @@
-﻿<!-- Panel de configuracion con pestanas -->
+<!-- Panel de configuracion con pestanas -->
 <div class="panel">
     <h1 class="config-main-title">Configuraci&oacute;n</h1>
 
@@ -149,7 +149,7 @@
                     <img src="https://cdn-icons-gif.flaticon.com/15575/15575664.gif" alt="">
                     <span>Compras /<br>Proveedores</span>
                 </li>
-                <li class="panel-item" onclick="open_w('notificar-correo')">
+                <li class="panel-item" data-admin-sia-only="1" onclick="open_w('notificar-correo')">
                     <img src="https://cdn-icons-gif.flaticon.com/11237/11237480.gif" alt="">
                     <span>Notificar<br>correo</span>
                 </li>
@@ -174,14 +174,14 @@
                     <img src="https://cdn-icons-gif.flaticon.com/16313/16313572.gif" alt="">
                     <span>Actualizaciones<br>automaticas</span>
                 </li>
+                <li class="panel-item" data-admin-sia-only="1" onclick="open_w('respaldo-automatico')">
+                    <img src="https://cdn-icons-gif.flaticon.com/16313/16313609.gif" alt="">
+                    <span>Respaldo<br>automatico</span>
+                </li>
             </ul>
             <div class="panel-upcoming">
                 <h4 class="panel-upcoming-title">Mejoras en camino</h4>
                 <ul class="panel-grid panel-grid-upcoming">
-                    <li class="panel-item panel-item-disabled" data-upcoming="Permitira programar copias de seguridad automaticas, con almacenamiento local y verificacion de integridad de respaldo.">
-                        <img src="https://cdn-icons-gif.flaticon.com/16313/16313609.gif" alt="">
-                        <span>Respaldo<br>automatico<br><small>Proximamente</small></span>
-                    </li>
                     <li class="panel-item panel-item-disabled" data-upcoming="Permitira administrar vigencia de licencia, renovaciones y validacion de condiciones comerciales del sistema.">
                         <img src="https://cdn-icons-gif.flaticon.com/15578/15578358.gif" alt="">
                         <span>Licencia<br><small>Proximamente</small></span>

@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -485,6 +485,19 @@ async function isAdminSiaUser(userId, executor = db) {
   return String(rows[0]?.user || '').trim().toLowerCase() === 'admin_sia';
 }
 
+async function requireAdminSia(req, res) {
+  try {
+    const allowed = await isAdminSiaUser(req.user?.sub);
+    if (!allowed) {
+      res.status(403).json({ message: 'Configuracion disponible solo para admin_sia' });
+      return false;
+    }
+    return true;
+  } catch (_) {
+    res.status(500).json({ message: 'No se pudo validar el permiso administrativo' });
+    return false;
+  }
+}
 function normalizeHourMinute(value, fallback = '00:00') {
   const raw = String(value || '').trim();
   if (/^([01]\d|2[0-3]):([0-5]\d)$/.test(raw)) {
@@ -1111,18 +1124,25 @@ function getSantiagoCalendarDate(date = new Date()) {
   return `${partValue('year')}-${partValue('month')}-${partValue('day')}`;
 }
 
-function shouldSendProductDeletionTemporaryCopy(date = new Date()) {
+function shouldSendTemporaryCopy(email, expiresOn, date = new Date()) {
+  const normalizedEmail = String(email || '').trim();
+  const normalizedExpiry = String(expiresOn || '').trim();
+  if (!isValidEmail(normalizedEmail) || !isIsoDate(normalizedExpiry)) return false;
   const santiagoDate = getSantiagoCalendarDate(date);
-  return /^\d{4}-\d{2}-\d{2}$/.test(santiagoDate)
-    && santiagoDate <= PRODUCT_DELETION_TEMP_CC_LAST_DATE;
+  return /^\d{4}-\d{2}-\d{2}$/.test(santiagoDate) && santiagoDate <= normalizedExpiry;
 }
 
-function shouldSendInventoryAdjustmentTemporaryCopy(date = new Date()) {
-  const santiagoDate = getSantiagoCalendarDate(date);
-  return /^\d{4}-\d{2}-\d{2}$/.test(santiagoDate)
-    && santiagoDate <= INVENTORY_ADJUSTMENT_TEMP_CC_LAST_DATE;
+async function getNotificationDeliverySettings() {
+  const row = await getServiceEmailSettings().catch(() => null);
+  return {
+    catalogTo: String(row?.catalog_deletion_to || PRODUCT_DELETION_EMAIL_TO).trim(),
+    catalogCc: String(row?.catalog_deletion_cc || '').trim(),
+    catalogCcExpiresOn: row?.catalog_deletion_cc_expires_on ? new Date(row.catalog_deletion_cc_expires_on).toISOString().slice(0, 10) : '',
+    inventoryTo: String(row?.inventory_adjustment_to || PRODUCT_DELETION_EMAIL_TO).trim(),
+    inventoryCc: String(row?.inventory_adjustment_cc || '').trim(),
+    inventoryCcExpiresOn: row?.inventory_adjustment_cc_expires_on ? new Date(row.inventory_adjustment_cc_expires_on).toISOString().slice(0, 10) : '',
+  };
 }
-
 function escapeProductDeletionEmailHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1146,6 +1166,7 @@ async function sendProductDeletionEmail(products, requestedBy = '') {
     auth: mailBundle.transport.auth,
   });
   const deletedAt = new Date();
+  const delivery = await getNotificationDeliverySettings();
   const formatClp = (value) => new Intl.NumberFormat('es-CL', {
     style: 'currency',
     currency: 'CLP',
@@ -1170,8 +1191,8 @@ async function sendProductDeletionEmail(products, requestedBy = '') {
 
   await transporter.sendMail({
     from: mailBundle.transport.from,
-    to: PRODUCT_DELETION_EMAIL_TO,
-    cc: shouldSendProductDeletionTemporaryCopy(deletedAt) ? PRODUCT_DELETION_TEMP_CC : undefined,
+    to: delivery.catalogTo,
+    cc: shouldSendTemporaryCopy(delivery.catalogCc, delivery.catalogCcExpiresOn, deletedAt) ? delivery.catalogCc : undefined,
     subject: `[Minimarket] ${products.length} producto${products.length === 1 ? '' : 's'} eliminado${products.length === 1 ? '' : 's'} del catálogo`,
     text: [
       'Se eliminaron productos del catálogo de Minimarket.',
@@ -1232,6 +1253,7 @@ async function sendInventoryAdjustmentEmail(adjustment, requestedBy = '') {
     auth: mailBundle.transport.auth,
   });
   const adjustedAt = new Date();
+  const delivery = await getNotificationDeliverySettings();
   const adjustedAtLabel = adjustedAt.toLocaleString('es-CL', { timeZone: 'America/Santiago' });
   const actor = String(requestedBy || '').trim() || 'Usuario no identificado';
   const formatQuantity = (value) => new Intl.NumberFormat('es-CL', {
@@ -1255,8 +1277,8 @@ async function sendInventoryAdjustmentEmail(adjustment, requestedBy = '') {
 
   await transporter.sendMail({
     from: mailBundle.transport.from,
-    to: PRODUCT_DELETION_EMAIL_TO,
-    cc: shouldSendInventoryAdjustmentTemporaryCopy(adjustedAt) ? INVENTORY_ADJUSTMENT_TEMP_CC : undefined,
+    to: delivery.inventoryTo,
+    cc: shouldSendTemporaryCopy(delivery.inventoryCc, delivery.inventoryCcExpiresOn, adjustedAt) ? delivery.inventoryCc : undefined,
     subject: `[Minimarket] Ajuste de inventario: ${adjustment.descripcion || adjustment.codigo_barras}`,
     text: [
       'Se realizó un ajuste manual en la cantidad de un producto del inventario de Minimarket.',
@@ -1457,6 +1479,180 @@ async function createPurchaseOrder() {
   return { id: Number(result.insertId), status: 'active', assigned_buyer_id: null };
 }
 
+let automaticBackupInProgress = false;
+let automaticBackupTimer = null;
+
+function getSafeBackupDatabaseName() {
+  const databaseName = String(config.backup.databaseName || 'minimarket_backup_actual').trim();
+  return /^[a-zA-Z0-9_]+$/.test(databaseName) ? databaseName : 'minimarket_backup_actual';
+}
+function getBackupExecutable(name) {
+  const suffix = process.platform === 'win32' ? '.exe' : '';
+  return path.join(String(config.backup.mysqlBinDir || ''), `${name}${suffix}`);
+}
+
+function backupConfigIsComplete() {
+  return Boolean(config.backup.runnerEnabled && config.backup.host && config.backup.user && config.backup.password);
+}
+
+async function openRemoteBackupConnection() {
+  const mysqlPromise = require('mysql2/promise');
+  return mysqlPromise.createConnection({
+    host: config.backup.host,
+    port: config.backup.port,
+    user: config.backup.user,
+    password: config.backup.password,
+    connectTimeout: 15000,
+  });
+}
+
+function pipeDatabaseDumpToRemote(targetDatabase) {
+  return new Promise((resolve, reject) => {
+    const dumpArgs = [
+      '--single-transaction', '--routines', '--events', '--triggers', '--hex-blob',
+      '--default-character-set=utf8mb4', '--host', config.db.host, '--port', String(config.db.port),
+      '--user', config.db.user, config.db.database,
+    ];
+    const importArgs = [
+      '--default-character-set=utf8mb4', '--host', config.backup.host, '--port', String(config.backup.port),
+      '--user', config.backup.user, targetDatabase,
+    ];
+    const dumpProcess = spawn(getBackupExecutable('mysqldump'), dumpArgs, {
+      windowsHide: true,
+      env: { ...process.env, MYSQL_PWD: config.db.password || '' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const importProcess = spawn(getBackupExecutable('mysql'), importArgs, {
+      windowsHide: true,
+      env: { ...process.env, MYSQL_PWD: config.backup.password },
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    let dumpError = '';
+    let importError = '';
+    let dumpCode = null;
+    let importCode = null;
+    let settled = false;
+    const finish = () => {
+      if (settled || dumpCode === null || importCode === null) return;
+      settled = true;
+      if (dumpCode === 0 && importCode === 0) return resolve();
+      return reject(new Error((importError || dumpError || `mysqldump=${dumpCode}, mysql=${importCode}`).trim().slice(0, 1000)));
+    };
+    dumpProcess.stderr.on('data', (chunk) => { dumpError += String(chunk); });
+    importProcess.stderr.on('data', (chunk) => { importError += String(chunk); });
+    dumpProcess.on('error', (error) => { dumpError += error.message; dumpCode = -1; finish(); });
+    importProcess.on('error', (error) => { importError += error.message; importCode = -1; finish(); });
+    dumpProcess.on('close', (code) => { dumpCode = Number(code); finish(); });
+    importProcess.on('close', (code) => { importCode = Number(code); finish(); });
+    dumpProcess.stdout.pipe(importProcess.stdin);
+  });
+}
+
+async function getAutomaticBackupSettings() {
+  const [rows] = await db.query('SELECT * FROM automatic_backup_settings WHERE id = 1 LIMIT 1');
+  return rows[0] || null;
+}
+
+function calculateNextBackupAt(settings) {
+  if (!settings?.last_success_at) return new Date();
+  const next = new Date(settings.last_success_at);
+  next.setDate(next.getDate() + clampInt(settings.interval_days, 1, 365, 15));
+  return next;
+}
+
+async function countSourceDatabaseTables() {
+  const [rows] = await db.query('SHOW FULL TABLES WHERE Table_type = ?', ['BASE TABLE']);
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+async function countRemoteDatabaseTables(remote, databaseName) {
+  const [rows] = await remote.query(
+    `SELECT COUNT(*) AS total FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
+    [databaseName]
+  );
+  return Number(rows[0]?.total || 0);
+}
+
+async function runAutomaticDatabaseBackup({ force = false, requestedBy = null } = {}) {
+  if (!backupConfigIsComplete()) throw new Error('El ejecutor remoto no esta habilitado o faltan credenciales en server/.env');
+  if (automaticBackupInProgress) throw new Error('Ya existe un respaldo en ejecucion');
+  const settings = await getAutomaticBackupSettings();
+  if (!settings || !Number(settings.enabled)) {
+    if (force) throw new Error('El respaldo automatico esta deshabilitado');
+    return { skipped: true, reason: 'disabled' };
+  }
+  const nextRunAt = calculateNextBackupAt(settings);
+  if (!force && nextRunAt.getTime() > Date.now()) return { skipped: true, reason: 'not_due', next_run_at: nextRunAt };
+
+  automaticBackupInProgress = true;
+  const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  const databaseName = getSafeBackupDatabaseName();
+  const stagingDatabaseName = `${databaseName}_staging_${stamp}`;
+  let remote = null;
+  let stagingVerified = false;
+  try {
+    await db.query(
+      `UPDATE automatic_backup_settings SET last_started_at = NOW(), last_status = 'running', last_error = NULL, updated_by = ? WHERE id = 1`,
+      [toInt(requestedBy)]
+    );
+    remote = await openRemoteBackupConnection();
+    const sourceTableCount = await countSourceDatabaseTables();
+    if (sourceTableCount < 1) throw new Error('La base de origen no contiene tablas para respaldar');
+
+    await remote.query(`CREATE DATABASE \`${stagingDatabaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await pipeDatabaseDumpToRemote(stagingDatabaseName);
+    const stagingTableCount = await countRemoteDatabaseTables(remote, stagingDatabaseName);
+    if (stagingTableCount !== sourceTableCount) {
+      throw new Error(`Validacion temporal incorrecta: origen=${sourceTableCount}, copia=${stagingTableCount}`);
+    }
+    stagingVerified = true;
+
+    await remote.query(`DROP DATABASE IF EXISTS \`${databaseName}\``);
+    await remote.query(`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await pipeDatabaseDumpToRemote(databaseName);
+    const destinationTableCount = await countRemoteDatabaseTables(remote, databaseName);
+    if (destinationTableCount !== sourceTableCount) {
+      throw new Error(`Validacion final incorrecta: origen=${sourceTableCount}, destino=${destinationTableCount}`);
+    }
+
+    await remote.query(`DROP DATABASE \`${stagingDatabaseName}\``);
+    await db.query(
+      `UPDATE automatic_backup_settings SET last_success_at = NOW(), last_status = 'success', last_database_name = ?, last_error = NULL, updated_by = ? WHERE id = 1`,
+      [databaseName, toInt(requestedBy)]
+    );
+    return { ok: true, database_name: databaseName, table_count: destinationTableCount };
+  } catch (error) {
+    const recoveryNote = stagingVerified ? ` Copia temporal de recuperacion: ${stagingDatabaseName}.` : '';
+    if (remote && !stagingVerified) {
+      await remote.query(`DROP DATABASE IF EXISTS \`${stagingDatabaseName}\``).catch(() => {});
+    }
+    const errorMessage = `${String(error?.message || error)}${recoveryNote}`.slice(0, 1000);
+    await db.query(
+      `UPDATE automatic_backup_settings SET last_status = 'error', last_error = ?, updated_by = ? WHERE id = 1`,
+      [errorMessage, toInt(requestedBy)]
+    ).catch(() => {});
+    throw new Error(errorMessage);
+  } finally {
+    automaticBackupInProgress = false;
+    if (remote) await remote.end().catch(() => {});
+  }
+}
+async function checkAutomaticBackupSchedule() {
+  if (!config.backup.runnerEnabled) return;
+  try {
+    await runAutomaticDatabaseBackup({ force: false });
+  } catch (error) {
+    console.error('Error en respaldo automatico:', error.message || error);
+  }
+}
+
+function startAutomaticBackupScheduler() {
+  if (!config.backup.runnerEnabled || automaticBackupTimer) return;
+  console.log('Programador de respaldo remoto habilitado.');
+  setTimeout(checkAutomaticBackupSchedule, 15000);
+  automaticBackupTimer = setInterval(checkAutomaticBackupSchedule, 60 * 60 * 1000);
+  automaticBackupTimer.unref?.();
+}
 async function buildDatabaseSqlDump() {
   const [tableRows] = await db.query('SHOW TABLES');
   const tableNames = tableRows
@@ -3862,6 +4058,58 @@ async function ensureOperationalTables() {
     VALUES (1, 0, NULL, 587, 0, NULL, NULL, NULL, NULL, NULL, NULL)
     ON DUPLICATE KEY UPDATE id = id`
   );
+  const emailSettingsColumns = await getTableColumnSet(db, 'service_email_settings');
+  const emailSettingsMigrations = [
+    ['catalog_deletion_to', "ADD COLUMN catalog_deletion_to VARCHAR(180) NULL"],
+    ['catalog_deletion_cc', "ADD COLUMN catalog_deletion_cc VARCHAR(180) NULL"],
+    ['catalog_deletion_cc_expires_on', "ADD COLUMN catalog_deletion_cc_expires_on DATE NULL"],
+    ['inventory_adjustment_to', "ADD COLUMN inventory_adjustment_to VARCHAR(180) NULL"],
+    ['inventory_adjustment_cc', "ADD COLUMN inventory_adjustment_cc VARCHAR(180) NULL"],
+    ['inventory_adjustment_cc_expires_on', "ADD COLUMN inventory_adjustment_cc_expires_on DATE NULL"],
+  ];
+  for (const [columnName, definition] of emailSettingsMigrations) {
+    if (!emailSettingsColumns.has(columnName)) {
+      await db.query(`ALTER TABLE service_email_settings ${definition}`);
+    }
+  }
+  if (!emailSettingsColumns.has('catalog_deletion_cc')) {
+    await db.query("UPDATE service_email_settings SET catalog_deletion_cc = 'oteizanicolas@gmail.com' WHERE id = 1");
+  }
+  if (!emailSettingsColumns.has('catalog_deletion_cc_expires_on')) {
+    await db.query("UPDATE service_email_settings SET catalog_deletion_cc_expires_on = '2026-07-31' WHERE id = 1");
+  }
+  if (!emailSettingsColumns.has('inventory_adjustment_cc')) {
+    await db.query("UPDATE service_email_settings SET inventory_adjustment_cc = 'siatalca@gmail.com' WHERE id = 1");
+  }
+  if (!emailSettingsColumns.has('inventory_adjustment_cc_expires_on')) {
+    await db.query("UPDATE service_email_settings SET inventory_adjustment_cc_expires_on = '2026-08-31' WHERE id = 1");
+  }
+  await db.query(
+    `UPDATE service_email_settings
+     SET catalog_deletion_to = COALESCE(NULLIF(catalog_deletion_to, ''), 'cvasquezc08@gmail.com'),
+         inventory_adjustment_to = COALESCE(NULLIF(inventory_adjustment_to, ''), 'cvasquezc08@gmail.com')
+     WHERE id = 1`
+  );
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS automatic_backup_settings (
+      id INT PRIMARY KEY,
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      interval_days INT NOT NULL DEFAULT 15,
+      last_started_at DATETIME NULL,
+      last_success_at DATETIME NULL,
+      last_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      last_database_name VARCHAR(128) NULL,
+      last_error VARCHAR(1000) NULL,
+      updated_by INT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+  await db.query(
+    `INSERT INTO automatic_backup_settings (id, enabled, interval_days)
+     VALUES (1, 1, 15)
+     ON DUPLICATE KEY UPDATE id = id`
+  );
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS product_promotions (
@@ -4156,6 +4404,7 @@ if (schemaSyncOnlyMode) {
   bootstrapDatabase()
     .then(() => {
       startApiServer();
+      startAutomaticBackupScheduler();
     })
     .catch((err) => {
       console.error('Error de conexion a la base de datos:', err);
@@ -5982,6 +6231,7 @@ app.get('/api/purchase-list-preview', async (req, res) => {
 });
 
 app.get('/api/service-email-settings', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
   try {
     const row = await getServiceEmailSettings();
     if (!row) {
@@ -5998,6 +6248,12 @@ app.get('/api/service-email-settings', async (req, res) => {
       from_name: row.from_name || '',
       owner_email: row.owner_email || '',
       cc_emails: row.cc_emails || '',
+      catalog_deletion_to: row.catalog_deletion_to || PRODUCT_DELETION_EMAIL_TO,
+      catalog_deletion_cc: row.catalog_deletion_cc || '',
+      catalog_deletion_cc_expires_on: row.catalog_deletion_cc_expires_on ? new Date(row.catalog_deletion_cc_expires_on).toISOString().slice(0, 10) : '',
+      inventory_adjustment_to: row.inventory_adjustment_to || PRODUCT_DELETION_EMAIL_TO,
+      inventory_adjustment_cc: row.inventory_adjustment_cc || '',
+      inventory_adjustment_cc_expires_on: row.inventory_adjustment_cc_expires_on ? new Date(row.inventory_adjustment_cc_expires_on).toISOString().slice(0, 10) : '',
     });
   } catch (err) {
     return res.status(500).json({ message: 'Error al cargar configuracion de correo' });
@@ -6005,6 +6261,7 @@ app.get('/api/service-email-settings', async (req, res) => {
 });
 
 app.put('/api/service-email-settings', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
   const enabled = normalizeBool(req.body?.enabled, false) ? 1 : 0;
   const smtpHost = typeof req.body?.smtp_host === 'string' ? req.body.smtp_host.trim().slice(0, 120) : null;
   const smtpPort = clampInt(req.body?.smtp_port, 1, 65535, 587);
@@ -6018,7 +6275,24 @@ app.put('/api/service-email-settings', async (req, res) => {
   const ownerEmail = ownerEmailRaw || null;
   const ccList = parseEmailList(typeof req.body?.cc_emails === 'string' ? req.body.cc_emails : '', 20);
   const ccEmails = ccList.length ? ccList.join(', ') : null;
-
+  const catalogDeletionTo = String(req.body?.catalog_deletion_to || '').trim().slice(0, 180);
+  const catalogDeletionCc = String(req.body?.catalog_deletion_cc || '').trim().slice(0, 180);
+  const catalogDeletionCcExpiresOn = String(req.body?.catalog_deletion_cc_expires_on || '').trim().slice(0, 10);
+  const inventoryAdjustmentTo = String(req.body?.inventory_adjustment_to || '').trim().slice(0, 180);
+  const inventoryAdjustmentCc = String(req.body?.inventory_adjustment_cc || '').trim().slice(0, 180);
+  const inventoryAdjustmentCcExpiresOn = String(req.body?.inventory_adjustment_cc_expires_on || '').trim().slice(0, 10);
+  if (!isValidEmail(catalogDeletionTo) || !isValidEmail(inventoryAdjustmentTo)) {
+    return res.status(400).json({ message: 'Los correos principales de reportes son obligatorios y deben ser validos' });
+  }
+  if (catalogDeletionCc && !isValidEmail(catalogDeletionCc)) {
+    return res.status(400).json({ message: 'Correo copia de eliminacion invalido' });
+  }
+  if (inventoryAdjustmentCc && !isValidEmail(inventoryAdjustmentCc)) {
+    return res.status(400).json({ message: 'Correo copia de ajustes invalido' });
+  }
+  if ((catalogDeletionCc && !isIsoDate(catalogDeletionCcExpiresOn)) || (inventoryAdjustmentCc && !isIsoDate(inventoryAdjustmentCcExpiresOn))) {
+    return res.status(400).json({ message: 'Cada correo copia debe tener una fecha de expiracion valida' });
+  }
   if (fromEmail && !isValidEmail(fromEmail)) {
     return res.status(400).json({ message: 'Correo emisor invalido' });
   }
@@ -6030,9 +6304,13 @@ app.put('/api/service-email-settings', async (req, res) => {
     await db.query(
       `UPDATE service_email_settings
        SET enabled = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?, smtp_pass = ?,
-           from_email = ?, from_name = ?, owner_email = ?, cc_emails = ?
+           from_email = ?, from_name = ?, owner_email = ?, cc_emails = ?,
+           catalog_deletion_to = ?, catalog_deletion_cc = ?, catalog_deletion_cc_expires_on = ?,
+           inventory_adjustment_to = ?, inventory_adjustment_cc = ?, inventory_adjustment_cc_expires_on = ?
        WHERE id = 1`,
-      [enabled, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass, fromEmail, fromName, ownerEmail, ccEmails]
+      [enabled, smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass, fromEmail, fromName, ownerEmail, ccEmails,
+        catalogDeletionTo, catalogDeletionCc || null, catalogDeletionCc ? catalogDeletionCcExpiresOn : null,
+        inventoryAdjustmentTo, inventoryAdjustmentCc || null, inventoryAdjustmentCc ? inventoryAdjustmentCcExpiresOn : null]
     );
     if (fromEmail) {
       await db.query(
@@ -6049,6 +6327,7 @@ app.put('/api/service-email-settings', async (req, res) => {
 });
 
 app.post('/api/service-email-settings/test', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
   try {
     const row = await getServiceEmailSettings();
     if (!row) {
@@ -12334,6 +12613,55 @@ app.get('/api/export/salidas.xlsx', async (req, res) => {
   }
 });
 
+app.get('/api/admin/automatic-backup-settings', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  try {
+    const row = await getAutomaticBackupSettings();
+    const nextRunAt = row && Number(row.enabled) ? calculateNextBackupAt(row) : null;
+    return res.json({
+      enabled: Number(row?.enabled || 0),
+      interval_days: Number(row?.interval_days || 15),
+      last_started_at: row?.last_started_at || null,
+      last_success_at: row?.last_success_at || null,
+      last_status: row?.last_status || 'pending',
+      last_database_name: row?.last_database_name || '',
+      last_error: row?.last_error || '',
+      next_run_at: nextRunAt,
+      runner_enabled: Boolean(config.backup.runnerEnabled),
+      destination_host: config.backup.host || '',
+      destination_port: config.backup.port,
+      destination_database: getSafeBackupDatabaseName(),
+      in_progress: automaticBackupInProgress,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'No se pudo cargar la configuracion de respaldo' });
+  }
+});
+
+app.put('/api/admin/automatic-backup-settings', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  const enabled = normalizeBool(req.body?.enabled, true) ? 1 : 0;
+  const intervalDays = clampInt(req.body?.interval_days, 1, 365, 15);
+  try {
+    await db.query(
+      `UPDATE automatic_backup_settings SET enabled = ?, interval_days = ?, updated_by = ? WHERE id = 1`,
+      [enabled, intervalDays, toInt(req.user?.sub)]
+    );
+    return res.json({ message: 'Configuracion de respaldo guardada' });
+  } catch (error) {
+    return res.status(500).json({ message: 'No se pudo guardar la configuracion de respaldo' });
+  }
+});
+
+app.post('/api/admin/automatic-backups/run', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  try {
+    const result = await runAutomaticDatabaseBackup({ force: true, requestedBy: req.user?.sub });
+    return res.json({ message: 'Respaldo remoto completado', ...result });
+  } catch (error) {
+    return res.status(500).json({ message: String(error?.message || 'No se pudo completar el respaldo').slice(0, 1000) });
+  }
+});
 app.get('/api/database/export', async (req, res) => {
   try {
     const dump = await buildDatabaseSqlDump();

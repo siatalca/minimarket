@@ -64,6 +64,15 @@ const config = {
     pass: env.SMTP_PASS || '',
     from: env.SMTP_FROM || '',
   },
+  backup: {
+    runnerEnabled: env.BACKUP_RUNNER_ENABLED === '1' || env.BACKUP_RUNNER_ENABLED === 'true',
+    host: env.BACKUP_DB_HOST || '',
+    port: Number.parseInt(env.BACKUP_DB_PORT, 10) || 3306,
+    user: env.BACKUP_DB_USER || '',
+    password: env.BACKUP_DB_PASSWORD || '',
+    databaseName: env.BACKUP_DB_NAME || 'minimarket_backup_actual',
+    mysqlBinDir: env.BACKUP_MYSQL_BIN_DIR || 'C:\\xampp\\mysql\\bin',
+  },
   dte: {
     certSecret: env.DTE_CERT_SECRET || `${env.JWT_SECRET || 'minimarket_local'}_dte_cert_secret`,
   },
