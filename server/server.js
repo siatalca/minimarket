@@ -1097,8 +1097,10 @@ async function sendErrorEmailNow(subject, bodyText) {
 const PRODUCT_DELETION_EMAIL_TO = 'cvasquezc08@gmail.com';
 const PRODUCT_DELETION_TEMP_CC = 'oteizanicolas@gmail.com';
 const PRODUCT_DELETION_TEMP_CC_LAST_DATE = '2026-07-31';
+const INVENTORY_ADJUSTMENT_TEMP_CC = 'siatalca@gmail.com';
+const INVENTORY_ADJUSTMENT_TEMP_CC_LAST_DATE = '2026-08-31';
 
-function shouldSendProductDeletionTemporaryCopy(date = new Date()) {
+function getSantiagoCalendarDate(date = new Date()) {
   const dateParts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Santiago',
     year: 'numeric',
@@ -1106,9 +1108,19 @@ function shouldSendProductDeletionTemporaryCopy(date = new Date()) {
     day: '2-digit',
   }).formatToParts(date);
   const partValue = (type) => dateParts.find((part) => part.type === type)?.value || '';
-  const santiagoDate = `${partValue('year')}-${partValue('month')}-${partValue('day')}`;
+  return `${partValue('year')}-${partValue('month')}-${partValue('day')}`;
+}
+
+function shouldSendProductDeletionTemporaryCopy(date = new Date()) {
+  const santiagoDate = getSantiagoCalendarDate(date);
   return /^\d{4}-\d{2}-\d{2}$/.test(santiagoDate)
     && santiagoDate <= PRODUCT_DELETION_TEMP_CC_LAST_DATE;
+}
+
+function shouldSendInventoryAdjustmentTemporaryCopy(date = new Date()) {
+  const santiagoDate = getSantiagoCalendarDate(date);
+  return /^\d{4}-\d{2}-\d{2}$/.test(santiagoDate)
+    && santiagoDate <= INVENTORY_ADJUSTMENT_TEMP_CC_LAST_DATE;
 }
 
 function escapeProductDeletionEmailHtml(value) {
@@ -1134,8 +1146,14 @@ async function sendProductDeletionEmail(products, requestedBy = '') {
     auth: mailBundle.transport.auth,
   });
   const deletedAt = new Date();
+  const formatClp = (value) => new Intl.NumberFormat('es-CL', {
+    style: 'currency',
+    currency: 'CLP',
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
   const rows = products.map((product, index) => (
     `${index + 1}. ${product.descripcion || 'Sin descripción'} | Código: ${product.codigo_barras}`
+    + ` | Costo: ${formatClp(product.costo)} | Precio venta: ${formatClp(product.precio_venta)}`
   ));
   const actor = String(requestedBy || '').trim() || 'Usuario no identificado';
   const deletedAtLabel = deletedAt.toLocaleString('es-CL', { timeZone: 'America/Santiago' });
@@ -1145,6 +1163,8 @@ async function sendProductDeletionEmail(products, requestedBy = '') {
       <td style="padding:10px 12px; border:1px solid #d9e0e7; text-align:center;">${index + 1}</td>
       <td style="padding:10px 12px; border:1px solid #d9e0e7;">${escapeProductDeletionEmailHtml(product.codigo_barras)}</td>
       <td style="padding:10px 12px; border:1px solid #d9e0e7;">${escapeProductDeletionEmailHtml(product.descripcion || 'Sin descripción')}</td>
+      <td style="padding:10px 12px; border:1px solid #d9e0e7; text-align:right; white-space:nowrap;">${escapeProductDeletionEmailHtml(formatClp(product.costo))}</td>
+      <td style="padding:10px 12px; border:1px solid #d9e0e7; text-align:right; white-space:nowrap;">${escapeProductDeletionEmailHtml(formatClp(product.precio_venta))}</td>
     </tr>
   `).join('');
 
@@ -1183,9 +1203,82 @@ async function sendProductDeletionEmail(products, requestedBy = '') {
                 <th style="width:55px; padding:10px 12px; border:1px solid #1f4e78;">N.º</th>
                 <th style="padding:10px 12px; border:1px solid #1f4e78; text-align:left;">Código</th>
                 <th style="padding:10px 12px; border:1px solid #1f4e78; text-align:left;">Descripción</th>
+                <th style="padding:10px 12px; border:1px solid #1f4e78; text-align:right;">Costo</th>
+                <th style="padding:10px 12px; border:1px solid #1f4e78; text-align:right;">Precio venta</th>
               </tr>
             </thead>
             <tbody>${tableRowsHtml}</tbody>
+          </table>
+          <p style="margin:22px 0 0; color:#667782; font-size:12px;">
+            Mensaje generado automáticamente por el sistema Minimarket.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+}
+
+async function sendInventoryAdjustmentEmail(adjustment, requestedBy = '') {
+  const mailBundle = await resolveErrorMailTransport();
+  if (!mailBundle?.transport) {
+    throw new Error('SMTP no configurado');
+  }
+
+  const nodemailer = require('nodemailer');
+  const transporter = nodemailer.createTransport({
+    host: mailBundle.transport.host,
+    port: mailBundle.transport.port,
+    secure: mailBundle.transport.secure,
+    auth: mailBundle.transport.auth,
+  });
+  const adjustedAt = new Date();
+  const adjustedAtLabel = adjustedAt.toLocaleString('es-CL', { timeZone: 'America/Santiago' });
+  const actor = String(requestedBy || '').trim() || 'Usuario no identificado';
+  const formatQuantity = (value) => new Intl.NumberFormat('es-CL', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+  }).format(Number(value || 0));
+  const detailRows = [
+    ['Código', adjustment.codigo_barras],
+    ['Producto', adjustment.descripcion || 'Sin descripción'],
+    ['Cantidad anterior', formatQuantity(adjustment.cantidad_anterior)],
+    ['Ajuste realizado', `${Number(adjustment.cambio_cantidad) > 0 ? '+' : ''}${formatQuantity(adjustment.cambio_cantidad)}`],
+    ['Cantidad nueva', formatQuantity(adjustment.cantidad_nueva)],
+    ['Motivo / detalle', adjustment.especificacion || 'Sin especificación'],
+  ];
+  const detailRowsHtml = detailRows.map(([label, value]) => `
+    <tr>
+      <th style="width:190px; padding:10px 12px; border:1px solid #d9e0e7; background:#eef5fb; text-align:left;">${escapeProductDeletionEmailHtml(label)}</th>
+      <td style="padding:10px 12px; border:1px solid #d9e0e7;">${escapeProductDeletionEmailHtml(value)}</td>
+    </tr>
+  `).join('');
+
+  await transporter.sendMail({
+    from: mailBundle.transport.from,
+    to: PRODUCT_DELETION_EMAIL_TO,
+    cc: shouldSendInventoryAdjustmentTemporaryCopy(adjustedAt) ? INVENTORY_ADJUSTMENT_TEMP_CC : undefined,
+    subject: `[Minimarket] Ajuste de inventario: ${adjustment.descripcion || adjustment.codigo_barras}`,
+    text: [
+      'Se realizó un ajuste manual en la cantidad de un producto del inventario de Minimarket.',
+      '',
+      `Fecha: ${adjustedAtLabel}`,
+      `Usuario: ${actor}`,
+      ...detailRows.map(([label, value]) => `${label}: ${value}`),
+    ].join('\n'),
+    html: `
+      <div style="margin:0; padding:24px; background:#f4f6f8; color:#263238; font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:680px; margin:0 auto; padding:28px; background:#ffffff; border:1px solid #dfe5ea; border-radius:8px;">
+          <h2 style="margin:0 0 16px; color:#1f4e78;">Ajuste de inventario</h2>
+          <p style="margin:0 0 18px; line-height:1.6;">
+            Este correo informa que se modificó manualmente la cantidad de un producto en el inventario de Minimarket.
+            A continuación se presenta el detalle del ajuste realizado.
+          </p>
+          <div style="margin:0 0 20px; padding:12px 16px; background:#eef5fb; border-left:4px solid #1f4e78;">
+            <div><strong>Fecha:</strong> ${escapeProductDeletionEmailHtml(adjustedAtLabel)}</div>
+            <div style="margin-top:6px;"><strong>Usuario:</strong> ${escapeProductDeletionEmailHtml(actor)}</div>
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:14px;">
+            <tbody>${detailRowsHtml}</tbody>
           </table>
           <p style="margin:22px 0 0; color:#667782; font-size:12px;">
             Mensaje generado automáticamente por el sistema Minimarket.
@@ -6749,7 +6842,7 @@ app.get('/api/productos/name/:name', async (req, res) => {
 app.get('/api/productos/catalog', async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT p.id_producto, p.codigo_barras, p.descripcion, p.precio_venta, p.cantidad_actual, p.utiliza_inventario,
+      `SELECT p.id_producto, p.codigo_barras, p.descripcion, p.costo, p.precio_venta, p.cantidad_actual, p.utiliza_inventario,
               p.exento_iva,
               p.supplier_id, s.name AS supplier_name, d.nombre AS departamento
        FROM productos p
@@ -6772,6 +6865,8 @@ app.post('/api/productos/catalog/deletion-notification', async (req, res) => {
     .map((product) => ({
       codigo_barras: toText(product?.codigo_barras, 80),
       descripcion: toText(product?.descripcion, 240),
+      costo: Number.isFinite(Number(product?.costo)) ? Number(product.costo) : 0,
+      precio_venta: Number.isFinite(Number(product?.precio_venta)) ? Number(product.precio_venta) : 0,
     }))
     .filter((product) => product.codigo_barras);
 
@@ -13973,7 +14068,7 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      `SELECT id_producto, codigo_barras, descripcion, cantidad_actual
+      `SELECT id_producto, codigo_barras, descripcion, cantidad_actual, costo, precio_venta
        FROM productos
        WHERE codigo_barras = ?
        LIMIT 1`,
@@ -14051,6 +14146,21 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
       movementLogged = true;
     } catch (movementError) {
       console.error('No se pudo registrar movimiento de inventario:', movementError);
+    }
+
+    if (movementType === 'ajuste' && qtyDelta !== 0) {
+      try {
+        await sendInventoryAdjustmentEmail({
+          codigo_barras: String(product.codigo_barras || code),
+          descripcion: String(product.descripcion || ''),
+          cantidad_anterior: safePreviousQty,
+          cambio_cantidad: qtyDelta,
+          cantidad_nueva: safeNewQty,
+          especificacion: movementNote,
+        }, req.user?.name);
+      } catch (notificationError) {
+        console.error('No se pudo enviar aviso de ajuste de inventario:', notificationError);
+      }
     }
 
     return res.json({

@@ -14549,6 +14549,8 @@ async function deleteSelectedCatalogProducts() {
                     products: deletedCodes.map((code) => ({
                         codigo_barras: code,
                         descripcion: normalizeText(selectedProductDetails.get(code)?.descripcion || ''),
+                        costo: Number(selectedProductDetails.get(code)?.costo || 0),
+                        precio_venta: Number(selectedProductDetails.get(code)?.precio_venta || 0),
                     })),
                 }),
             });
