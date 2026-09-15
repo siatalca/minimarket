@@ -571,10 +571,15 @@ function normalizeCutRebuildFilters(source = {}) {
 
 function buildCutRebuildWhere(filters, alias = 'v', options = {}) {
   const includeSaleIds = options?.includeSaleIds !== false;
+  const saleStatus = String(options?.saleStatus || 'active').trim().toLowerCase();
   const list = [];
   const params = [];
   if (alias === 'v') {
-    list.push(`COALESCE(${alias}.folio_ticket, '') NOT LIKE 'ANULADA-%'`);
+    if (saleStatus === 'cancelled') {
+      list.push(`COALESCE(${alias}.folio_ticket, '') LIKE 'ANULADA-%'`);
+    } else if (saleStatus !== 'all') {
+      list.push(`COALESCE(${alias}.folio_ticket, '') NOT LIKE 'ANULADA-%'`);
+    }
   }
   list.push(`${alias}.fecha BETWEEN ? AND ?`);
   params.push(filters.fromDateTime, filters.toDateTime);
@@ -600,6 +605,49 @@ function buildCutRebuildWhere(filters, alias = 'v', options = {}) {
     whereClause: list.join(' AND '),
     params,
   };
+}
+
+function extractSaleCancellationReason(value = '') {
+  const text = String(value || '').trim();
+  const match = text.match(/^\[ANULADA:\s*([^\]]+)\]/i);
+  return match ? String(match[1] || '').trim() : '';
+}
+
+async function fetchCancelledSalesReference(executor, whereClause, params = [], limit = 500) {
+  const safeLimit = clampInt(limit, 1, 1000, 500);
+  const [rows] = await executor.query(
+    `SELECT v.id_venta,
+            DATE_FORMAT(v.fecha, '%Y-%m-%d %H:%i:%s') AS fecha_venta,
+            DATE_FORMAT(v.pago_modificado_at, '%Y-%m-%d %H:%i:%s') AS fecha_anulacion,
+            CAST(v.numero_ticket AS CHAR) AS numero_ticket,
+            v.metodo_pago,
+            v.total AS monto_original,
+            COALESCE(NULLIF(ua.nombre, ''), CONCAT('Usuario ', v.pago_modificado_por), 'Sin identificar') AS anulada_por,
+            COALESCE((
+              SELECT d.descripcion
+              FROM detalle_venta d
+              WHERE d.venta_id = v.id_venta
+              ORDER BY d.id_detalle ASC
+              LIMIT 1
+            ), '') AS detalle_anulacion
+     FROM ventas v
+     LEFT JOIN usuarios ua ON ua.id = v.pago_modificado_por
+     WHERE ${whereClause}
+     ORDER BY COALESCE(v.pago_modificado_at, v.fecha) ASC, v.id_venta ASC
+     LIMIT ${safeLimit}`,
+    params
+  );
+
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    id_venta: Number(row.id_venta || 0),
+    numero_ticket: String(row.numero_ticket || row.id_venta || '').trim(),
+    fecha_venta: String(row.fecha_venta || '').trim(),
+    fecha_anulacion: String(row.fecha_anulacion || '').trim(),
+    metodo_pago: String(row.metodo_pago || '').trim().toLowerCase(),
+    monto_original: toPositiveAmount(row.monto_original, 0),
+    anulada_por: String(row.anulada_por || '').trim() || 'Sin identificar',
+    motivo: extractSaleCancellationReason(row.detalle_anulacion),
+  }));
 }
 
 function buildCutRebuildCutWhere(filters, alias = 'c') {
@@ -2919,6 +2967,7 @@ function buildCutSessionTicketText({ cut, settings, business, cutSettings = null
     : [];
   const entradaRows = Array.isArray(cut?.detalle_entradas) ? cut.detalle_entradas : [];
   const salidaRows = Array.isArray(cut?.detalle_salidas) ? cut.detalle_salidas : [];
+  const cancelledSaleRows = Array.isArray(cut?.detalle_anulaciones) ? cut.detalle_anulaciones : [];
   const entradaItems = summarizeCutMovementItems(entradaRows, 'ENTRADA SIN DETALLE');
   const salidaItems = summarizeCutMovementItems(salidaRows, 'SALIDA SIN DETALLE');
   const cutFormat = normalizeCutFormatSettingsRow(cutSettings || {});
@@ -3019,6 +3068,26 @@ function buildCutSessionTicketText({ cut, settings, business, cutSettings = null
       pushAmountLine(labels.label_returns, money(cut?.devoluciones || 0), '- ', { rightGutter: 2 });
       pushAmountLine(labels.label_total_sales_line, money(cut?.total_ventas || 0), '', { rightGutter: 2 });
     }
+    lines.push(divider);
+  }
+
+  if (cancelledSaleRows.length) {
+    lines.push(centerLine('VENTAS ANULADAS (REFERENCIA)'));
+    lines.push('NO INCLUIDAS EN LOS TOTALES DEL CORTE');
+    cancelledSaleRows.forEach((row) => {
+      const ticket = String(row?.numero_ticket || row?.id_venta || '-').trim();
+      pushAmountLine(`TICKET ${ticket}`, money(row?.monto_original || 0), '', { rightGutter: 2 });
+      const meta = [
+        row?.fecha_anulacion || row?.fecha_venta,
+        normalizeCutTicketPaymentLabel(row?.metodo_pago),
+        row?.anulada_por,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join(' | ');
+      if (meta) wrapText(meta).forEach((line) => lines.push(line));
+      if (row?.motivo) wrapText(`MOTIVO: ${row.motivo}`).forEach((line) => lines.push(line));
+    });
     lines.push(divider);
   }
 
@@ -8210,6 +8279,7 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
 
     const salesWhere = `COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
     const salesParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
+    const cancelledSalesWhere = salesWhere.replace("NOT LIKE 'ANULADA-%'", "LIKE 'ANULADA-%'");
     const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
     const movementParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
 
@@ -8226,6 +8296,11 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       `SELECT COUNT(*) AS transacciones, COALESCE(SUM(v.total), 0) AS total
        FROM ventas v
        WHERE ${salesWhere}`,
+      salesParams
+    );
+    const cancelledSalesRows = await fetchCancelledSalesReference(
+      db,
+      cancelledSalesWhere,
       salesParams
     );
     const [movementSummaryRows] = await db.query(
@@ -8343,6 +8418,7 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       salidas_transferencia: salidasTransferencia,
       efectivo_en_caja: efectivoEnCaja,
       devoluciones,
+      detalle_anulaciones: cancelledSalesRows,
       total_entradas: totalEntradas,
       total_salidas: totalSalidas,
       detalle_entradas: movementDetailRows
@@ -8481,6 +8557,7 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
     }
 
     const salesFilter = buildCutRebuildWhere(filters, 'v');
+    const cancelledSalesFilter = buildCutRebuildWhere(filters, 'v', { saleStatus: 'cancelled' });
     const movementFilter = buildCutRebuildWhere(filters, 'm', { includeSaleIds: false });
     const cutFilter = buildCutRebuildCutWhere(filters, 'c');
 
@@ -8497,6 +8574,12 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
        FROM ventas v
        WHERE ${salesFilter.whereClause}`,
       salesFilter.params
+    );
+    const cancelledSalesRows = await fetchCancelledSalesReference(
+      db,
+      cancelledSalesFilter.whereClause,
+      cancelledSalesFilter.params,
+      1000
     );
     const [movementSummaryRows] = await db.query(
       `SELECT m.tipo, m.metodo, COUNT(*) AS transacciones, COALESCE(SUM(m.monto), 0) AS total
@@ -8669,6 +8752,7 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
       salidas_transferencia: salidasTransferencia,
       efectivo_en_caja: efectivoEnCaja,
       devoluciones,
+      detalle_anulaciones: cancelledSalesRows,
       total_entradas: totalEntradas,
       total_salidas: totalSalidas,
       detalle_entradas: movementDetailRows
@@ -9852,6 +9936,7 @@ app.get('/api/corte/historial/detalle', async (req, res) => {
 
     const salesWhere = `COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
     const salesParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
+    const cancelledSalesWhere = salesWhere.replace("NOT LIKE 'ANULADA-%'", "LIKE 'ANULADA-%'");
     const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
     const movementParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
 
@@ -9868,6 +9953,11 @@ app.get('/api/corte/historial/detalle', async (req, res) => {
       `SELECT COUNT(*) AS transacciones, COALESCE(SUM(v.total), 0) AS total
        FROM ventas v
        WHERE ${salesWhere}`,
+      salesParams
+    );
+    const cancelledSalesRows = await fetchCancelledSalesReference(
+      db,
+      cancelledSalesWhere,
       salesParams
     );
     const [detailRows] = await db.query(
@@ -10044,6 +10134,7 @@ app.get('/api/corte/historial/detalle', async (req, res) => {
       resumen: summaryRows,
       totales: totalsRows[0] || { transacciones: 0, total: 0 },
       detalle: detailRows,
+      anulaciones: cancelledSalesRows,
       ventas_mixtas: mixedSalesRows,
       resumen_mixto: mixedSummary,
       resumen_financiero: {
@@ -10066,6 +10157,7 @@ app.get('/api/corte/historial/detalle', async (req, res) => {
           return type === 'abono' || type === 'entrada';
         }),
         detalle_salidas: movementDetailRows.filter((row) => String(row.tipo || '').trim().toLowerCase() === 'salida'),
+        detalle_anulaciones: cancelledSalesRows,
       },
       departamentos: departmentRows,
       top_productos_departamento: topProductsByDepartmentRows,
@@ -11590,6 +11682,7 @@ app.get('/api/turno/resumen', async (req, res) => {
       salesWhere += ' AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)';
       salesParams.push(sessionStart, openShiftId);
     }
+    const cancelledSalesWhere = salesWhere.replace("NOT LIKE 'ANULADA-%'", "LIKE 'ANULADA-%'");
 
     const [summaryRows] = await db.query(
       `SELECT vp.metodo_pago, COUNT(DISTINCT v.id_venta) AS transacciones, COALESCE(SUM(vp.monto), 0) AS total
@@ -11605,6 +11698,11 @@ app.get('/api/turno/resumen', async (req, res) => {
       `SELECT COUNT(*) AS transacciones, COALESCE(SUM(v.total), 0) AS total
        FROM ventas v
        WHERE ${salesWhere}`,
+      salesParams
+    );
+    const cancelledSalesRows = await fetchCancelledSalesReference(
+      db,
+      cancelledSalesWhere,
       salesParams
     );
 
@@ -11847,6 +11945,7 @@ app.get('/api/turno/resumen', async (req, res) => {
       resumen: summaryRows,
       totales: totalsRows[0] || { transacciones: 0, total: 0 },
       detalle: detailRows,
+      anulaciones: cancelledSalesRows,
       ventas_mixtas: mixedSalesRows,
       resumen_mixto: mixedSummary,
       resumen_financiero: {
@@ -11869,6 +11968,7 @@ app.get('/api/turno/resumen', async (req, res) => {
           return type === 'abono' || type === 'entrada';
         }),
         detalle_salidas: movementDetailRows.filter((row) => String(row.tipo || '').trim().toLowerCase() === 'salida'),
+        detalle_anulaciones: cancelledSalesRows,
       },
       departamentos: departmentRows,
       top_productos_departamento: topProductsByDepartmentRows,

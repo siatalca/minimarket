@@ -714,6 +714,11 @@
         #cut-history-popup .cut-history-actions .btn i {
             font-size: 0.82rem;
         }
+        #cut-view .cut-block-reference {
+            grid-column: 1 / -1;
+            border-color: #f0b7b7;
+            background: #fff8f8;
+        }
         #cut-history-popup .cut-history-actions .cut-history-search-btn {
             background: #0ea5e9;
             border-color: #0ea5e9;
@@ -1013,6 +1018,14 @@
                         <div class="cut-block">
                             <h4>Detalle de salidas</h4>
                             <ul id="cut-session-expense-list" class="cut-list cut-list-tight"></ul>
+                        </div>
+                    </div>
+
+                    <div class="cut-row-2">
+                        <div class="cut-block cut-block-reference">
+                            <h4>Ventas anuladas (solo referencia)</h4>
+                            <p class="cut-subtitle">No se incluyen en los totales ni en el dinero en caja</p>
+                            <ul id="cut-cancelled-sales-list" class="cut-list cut-list-tight"></ul>
                         </div>
                     </div>
 

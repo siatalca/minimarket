@@ -1906,6 +1906,7 @@ function applyHistoricalCutToView(row) {
 
     writeCutListValues('cut-session-income-list', [], 'Detalle de ingresos no disponible en corte historico.');
     writeCutListValues('cut-session-expense-list', [], 'Detalle de salidas no disponible en corte historico.');
+    writeCutListValues('cut-cancelled-sales-list', [], 'Cargando ventas anuladas del corte...');
     writeCutListValues('cut-mixed-summary-list', [], 'Desglose mixto no disponible en corte historico.');
     const mixedSummaryTotal = document.getElementById('cut-mixed-summary-total');
     if (mixedSummaryTotal) {
@@ -3950,6 +3951,9 @@ function renderCutFinancialSections(data = {}, options = {}) {
     const rawSummaryRows = Array.isArray(data.resumen) ? data.resumen : [];
     const detailRows = Array.isArray(data.detalle) ? data.detalle : [];
     const mixedRowsFromServer = Array.isArray(data.ventas_mixtas) ? data.ventas_mixtas : [];
+    const cancelledSalesRows = Array.isArray(data.anulaciones)
+        ? data.anulaciones
+        : (Array.isArray(data?.movimientos?.detalle_anulaciones) ? data.movimientos.detalle_anulaciones : []);
 
     const salesKpi = document.getElementById('cut-kpi-sales-total');
     const profitKpi = document.getElementById('cut-kpi-profit-total');
@@ -3961,6 +3965,7 @@ function renderCutFinancialSections(data = {}, options = {}) {
     const mixedSummaryTotal = document.getElementById('cut-mixed-summary-total');
     const incomeList = document.getElementById('cut-session-income-list');
     const expenseList = document.getElementById('cut-session-expense-list');
+    const cancelledSalesList = document.getElementById('cut-cancelled-sales-list');
     const departmentList = document.getElementById('cut-department-list');
     const departmentTotal = document.getElementById('cut-department-total');
     const mixedTicketList = document.getElementById('cut-mixed-ticket-list');
@@ -3978,6 +3983,7 @@ function renderCutFinancialSections(data = {}, options = {}) {
         if (mixedSummaryTotal) mixedSummaryTotal.textContent = '';
         if (incomeList) incomeList.innerHTML = '';
         if (expenseList) expenseList.innerHTML = '';
+        if (cancelledSalesList) cancelledSalesList.innerHTML = '';
         if (departmentList) departmentList.innerHTML = '';
         if (departmentTotal) departmentTotal.textContent = '';
         if (mixedTicketList) mixedTicketList.innerHTML = '';
@@ -4289,6 +4295,29 @@ function renderCutFinancialSections(data = {}, options = {}) {
                 if (row.descripcion) detailParts.push(row.descripcion);
                 li.textContent = detailParts.join(' | ');
                 expenseList.appendChild(li);
+            });
+        }
+    }
+
+    if (cancelledSalesList) {
+        cancelledSalesList.innerHTML = '';
+        if (!cancelledSalesRows.length) {
+            const li = document.createElement('li');
+            li.textContent = 'Sin ventas anuladas en el alcance seleccionado.';
+            cancelledSalesList.appendChild(li);
+        } else {
+            cancelledSalesRows.forEach((row) => {
+                const li = document.createElement('li');
+                const details = [
+                    `Ticket ${row.numero_ticket || row.id_venta || '-'}`,
+                    row.fecha_anulacion || row.fecha_venta || '',
+                    normalizeSalesPaymentMethodLabel(row.metodo_pago || ''),
+                    row.anulada_por || 'Sin identificar',
+                    formatCurrency(Number(row.monto_original || 0)),
+                ].filter(Boolean);
+                if (row.motivo) details.push(`Motivo: ${row.motivo}`);
+                li.textContent = details.join(' | ');
+                cancelledSalesList.appendChild(li);
             });
         }
     }
@@ -11283,6 +11312,9 @@ function buildCutSessionReceiptHtml(snapshot = {}, options = {}) {
     const movementSummaryRows = Array.isArray(data?.movimientos?.resumen) ? data.movimientos.resumen : [];
     const movementIncomeRows = Array.isArray(data?.movimientos?.detalle_ingresos) ? data.movimientos.detalle_ingresos : [];
     const movementExpenseRows = Array.isArray(data?.movimientos?.detalle_salidas) ? data.movimientos.detalle_salidas : [];
+    const cancelledSalesRows = Array.isArray(data.anulaciones)
+        ? data.anulaciones
+        : (Array.isArray(data?.movimientos?.detalle_anulaciones) ? data.movimientos.detalle_anulaciones : []);
     const departmentRows = Array.isArray(data.departamentos) ? data.departamentos : [];
     const financial = data.resumen_financiero || {};
 
@@ -11484,6 +11516,23 @@ function buildCutSessionReceiptHtml(snapshot = {}, options = {}) {
     ${lineHtml('DEVOLUCIONES', `- ${money(devolucionesVentas)}`)}
     <div class="separator"></div>
     ${lineHtml('TOTAL VENTAS', money(totalVentas), true)}
+
+    ${cancelledSalesRows.length ? `
+    <div class="section-title">== VENTAS ANULADAS (REFERENCIA) ==</div>
+    <div class="meta">NO INCLUIDAS EN LOS TOTALES DEL CORTE</div>
+    ${cancelledSalesRows.map((row) => {
+        const ticket = row.numero_ticket || row.id_venta || '-';
+        const meta = [
+            row.fecha_anulacion || row.fecha_venta || '',
+            normalizeSalesPaymentMethodLabel(row.metodo_pago || ''),
+            row.anulada_por || 'Sin identificar',
+        ]
+            .filter(Boolean)
+            .join(' | ');
+        const reason = row.motivo ? `<div class="meta">MOTIVO: ${escapeHtml(row.motivo)}</div>` : '';
+        return `${lineHtml(`TICKET ${ticket}`, money(row.monto_original || 0))}<div class="meta">${escapeHtml(meta)}</div>${reason}`;
+    }).join('')}
+    ` : ''}
 
     <div class="section-title">== VENTAS POR DEPTO ==</div>
     ${
@@ -12338,6 +12387,7 @@ async function closeCurrentShift(declaredOverride = null, declaredCardOverride =
         const mixedSummaryTotal = document.getElementById('cut-mixed-summary-total');
         const incomeList = document.getElementById('cut-session-income-list');
         const expenseList = document.getElementById('cut-session-expense-list');
+        const cancelledSalesList = document.getElementById('cut-cancelled-sales-list');
         const departmentList = document.getElementById('cut-department-list');
         const departmentTotal = document.getElementById('cut-department-total');
         const mixedTicketList = document.getElementById('cut-mixed-ticket-list');
@@ -12356,6 +12406,7 @@ async function closeCurrentShift(declaredOverride = null, declaredCardOverride =
         if (mixedSummaryTotal) mixedSummaryTotal.textContent = '';
         if (incomeList) incomeList.innerHTML = '';
         if (expenseList) expenseList.innerHTML = '';
+        if (cancelledSalesList) cancelledSalesList.innerHTML = '';
         if (departmentList) departmentList.innerHTML = '';
         if (departmentTotal) departmentTotal.textContent = '';
         if (mixedTicketList) mixedTicketList.innerHTML = '';
