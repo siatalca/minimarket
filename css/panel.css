@@ -3916,6 +3916,35 @@ body.dark #sales .sales-pending-empty {
     color: #ffffff !important;
 }
 
+#sales #sales-history-view-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+#sales #sales-history-cancel-sale-btn {
+    border-color: #991b1b !important;
+    background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%) !important;
+    color: #ffffff !important;
+}
+
+#sales #sales-history-cancel-sale-btn.hidden {
+    display: none !important;
+}
+
+#sales .sales-history-table tbody tr.sales-history-row-cancelled td {
+    background: #fef2f2 !important;
+    color: #7f1d1d !important;
+}
+
+#sales .sales-history-table tbody tr.sales-history-row-cancelled.sales-history-row-selected td {
+    background: #fee2e2 !important;
+}
+
+#sales .sales-history-cancelled-label {
+    color: #b91c1c !important;
+    font-size: 0.86rem !important;
+    letter-spacing: 0.35px !important;
+}
+
 #sales #sales-history-save-payment-btn {
     border-color: #15803d !important;
     background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%) !important;

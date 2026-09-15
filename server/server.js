@@ -573,6 +573,9 @@ function buildCutRebuildWhere(filters, alias = 'v', options = {}) {
   const includeSaleIds = options?.includeSaleIds !== false;
   const list = [];
   const params = [];
+  if (alias === 'v') {
+    list.push(`COALESCE(${alias}.folio_ticket, '') NOT LIKE 'ANULADA-%'`);
+  }
   list.push(`${alias}.fecha BETWEEN ? AND ?`);
   params.push(filters.fromDateTime, filters.toDateTime);
 
@@ -1308,6 +1311,93 @@ async function sendInventoryAdjustmentEmail(adjustment, requestedBy = '') {
         </div>
       </div>
     `,
+  });
+}
+
+async function sendSaleCancellationEmail(cancellation, requestedBy = '') {
+  const mailBundle = await resolveErrorMailTransport();
+  if (!mailBundle?.transport) {
+    throw new Error('SMTP no configurado');
+  }
+
+  const settings = await getServiceEmailSettings().catch(() => null);
+  const ownerEmail = String(settings?.owner_email || '').trim();
+  const to = isValidEmail(ownerEmail) ? ownerEmail : PRODUCT_DELETION_EMAIL_TO;
+  const nodemailer = require('nodemailer');
+  const transporter = nodemailer.createTransport({
+    host: mailBundle.transport.host,
+    port: mailBundle.transport.port,
+    secure: mailBundle.transport.secure,
+    auth: mailBundle.transport.auth,
+  });
+  const cancelledAt = new Date();
+  const cancelledAtLabel = cancelledAt.toLocaleString('es-CL', { timeZone: 'America/Santiago' });
+  const actor = String(requestedBy || '').trim() || 'Usuario no identificado';
+  const sale = cancellation?.sale || {};
+  const items = Array.isArray(cancellation?.items) ? cancellation.items : [];
+  const payments = Array.isArray(cancellation?.payments) ? cancellation.payments : [];
+  const formatClp = (value) => new Intl.NumberFormat('es-CL', {
+    style: 'currency', currency: 'CLP', maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+  const formatQty = (value) => new Intl.NumberFormat('es-CL', {
+    minimumFractionDigits: 0, maximumFractionDigits: 3,
+  }).format(Number(value || 0));
+  const ticket = String(sale.folio_ticket || sale.numero_ticket || sale.id_venta || '').trim();
+  const itemRowsHtml = items.map((item, index) => `
+    <tr>
+      <td style="padding:9px 10px;border:1px solid #d9e0e7;text-align:center;">${index + 1}</td>
+      <td style="padding:9px 10px;border:1px solid #d9e0e7;">${escapeProductDeletionEmailHtml(item.descripcion || 'Producto')}</td>
+      <td style="padding:9px 10px;border:1px solid #d9e0e7;text-align:right;">${escapeProductDeletionEmailHtml(formatQty(item.cantidad))}</td>
+      <td style="padding:9px 10px;border:1px solid #d9e0e7;text-align:right;white-space:nowrap;">${escapeProductDeletionEmailHtml(formatClp(item.precio_unitario))}</td>
+      <td style="padding:9px 10px;border:1px solid #d9e0e7;text-align:right;white-space:nowrap;">${escapeProductDeletionEmailHtml(formatClp(item.subtotal))}</td>
+    </tr>`).join('');
+  const paymentText = payments.length
+    ? payments.map((entry) => `${normalizeSalePaymentMethod(entry.metodo_pago)}: ${formatClp(entry.monto)}`).join(', ')
+    : String(sale.metodo_pago || 'Sin detalle');
+
+  await transporter.sendMail({
+    from: mailBundle.transport.from,
+    to,
+    subject: `[Minimarket] Venta anulada - Ticket ${ticket || sale.id_venta}`,
+    text: [
+      'Se anuló una venta en el sistema Minimarket.', '',
+      `Fecha de anulación: ${cancelledAtLabel}`,
+      `Anulada por: ${actor}`,
+      `Motivo: ${cancellation?.motivo || 'Sin motivo informado'}`,
+      `Ticket: ${ticket || sale.id_venta}`,
+      `Fecha de venta: ${sale.fecha || ''}`,
+      `Caja: ${sale.caja_id || ''}`,
+      `Cajero: ${sale.cajero_nombre || sale.usuario_id || ''}`,
+      `Pago: ${paymentText}`,
+      `Total: ${formatClp(sale.total)}`, '',
+      'Productos:',
+      ...items.map((item, index) => `${index + 1}. ${item.descripcion || 'Producto'} | Cantidad: ${formatQty(item.cantidad)} | Precio: ${formatClp(item.precio_unitario)} | Subtotal: ${formatClp(item.subtotal)}`),
+    ].join('\n'),
+    html: `
+      <div style="margin:0;padding:24px;background:#f4f6f8;color:#263238;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:760px;margin:0 auto;padding:28px;background:#fff;border:1px solid #dfe5ea;border-radius:8px;">
+          <h2 style="margin:0 0 16px;color:#991b1b;">Venta anulada</h2>
+          <p style="line-height:1.6;">Este correo informa que se anuló una venta en Minimarket. El stock de los productos con control de inventario fue devuelto y la venta dejó de contabilizarse en caja.</p>
+          <div style="margin:18px 0;padding:12px 16px;background:#fef2f2;border-left:4px solid #dc2626;line-height:1.6;">
+            <div><strong>Fecha de anulación:</strong> ${escapeProductDeletionEmailHtml(cancelledAtLabel)}</div>
+            <div><strong>Anulada por:</strong> ${escapeProductDeletionEmailHtml(actor)}</div>
+            <div><strong>Motivo:</strong> ${escapeProductDeletionEmailHtml(cancellation?.motivo || 'Sin motivo informado')}</div>
+            <div><strong>Ticket:</strong> ${escapeProductDeletionEmailHtml(ticket || sale.id_venta)}</div>
+            <div><strong>Fecha de venta:</strong> ${escapeProductDeletionEmailHtml(sale.fecha || '')}</div>
+            <div><strong>Caja / cajero:</strong> ${escapeProductDeletionEmailHtml(`${sale.caja_id || '-'} / ${sale.cajero_nombre || sale.usuario_id || '-'}`)}</div>
+            <div><strong>Pago:</strong> ${escapeProductDeletionEmailHtml(paymentText)}</div>
+            <div><strong>Total:</strong> ${escapeProductDeletionEmailHtml(formatClp(sale.total))}</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:14px;">
+            <thead><tr style="background:#991b1b;color:#fff;">
+              <th style="padding:9px 10px;border:1px solid #991b1b;">N.º</th><th style="padding:9px 10px;border:1px solid #991b1b;text-align:left;">Producto</th>
+              <th style="padding:9px 10px;border:1px solid #991b1b;text-align:right;">Cantidad</th><th style="padding:9px 10px;border:1px solid #991b1b;text-align:right;">Precio</th>
+              <th style="padding:9px 10px;border:1px solid #991b1b;text-align:right;">Subtotal</th>
+            </tr></thead><tbody>${itemRowsHtml}</tbody>
+          </table>
+          <p style="margin:22px 0 0;color:#667782;font-size:12px;">Mensaje generado automáticamente por el sistema Minimarket.</p>
+        </div>
+      </div>`,
   });
 }
 
@@ -3578,7 +3668,6 @@ async function ensureOperationalTables() {
   if (!salesCurrentLegacy.has('pago_modificado_por')) {
     await db.query('ALTER TABLE ventas ADD COLUMN pago_modificado_por INT NULL AFTER pago_modificado_at');
   }
-
   await db.query(`
     CREATE TABLE IF NOT EXISTS venta_pagos (
       id_pago BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -7941,6 +8030,9 @@ app.post('/api/print/sale-ticket', async (req, res) => {
       return res.status(404).json({ message: 'Venta no encontrada' });
     }
     const sale = saleRows[0];
+    if (String(sale.folio_ticket || '').trim().toUpperCase().startsWith('ANULADA-')) {
+      return res.status(409).json({ message: 'Una venta anulada no se puede reimprimir' });
+    }
     const salePaymentRows = await fetchSalePaymentAllocations(db, ventaId, sale);
     const settingsCajaId = toInt(sale.caja_id) || requestedCajaId || await resolveCajaIdForTicketSettings(req);
     const settings = await getTicketSettingsForCaja(settingsCajaId);
@@ -8109,7 +8201,7 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       return res.status(400).json({ message: 'No se pudo determinar el corte a imprimir' });
     }
 
-    const salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
+    const salesWhere = `COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
     const salesParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
     const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
     const movementParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
@@ -9078,6 +9170,9 @@ function buildReportSalesWhereFromQuery(query = {}, alias = 'v') {
   }
 
   const filters = [`DATE(${alias}.fecha) BETWEEN ? AND ?`];
+  if (alias === 'v') {
+    filters.push(`COALESCE(${alias}.folio_ticket, '') NOT LIKE 'ANULADA-%'`);
+  }
   const values = [startDate, endDate];
   if (cajaId) {
     filters.push(`${alias}.caja_id = ?`);
@@ -9283,8 +9378,10 @@ function buildCardLikeSqlList(alias = 'vp') {
 function buildMixedSaleConditionSql(alias = 'v') {
   return `
     (
-      LOWER(${alias}.metodo_pago) = 'mixto'
-      OR (
+      COALESCE(${alias}.folio_ticket, '') NOT LIKE 'ANULADA-%'
+      AND (
+        LOWER(${alias}.metodo_pago) = 'mixto'
+        OR (
         EXISTS (
           SELECT 1
           FROM venta_pagos vp_mix_cash
@@ -9299,6 +9396,7 @@ function buildMixedSaleConditionSql(alias = 'v') {
             AND ${buildCardLikeSqlList('vp_mix_card')}
             AND COALESCE(vp_mix_card.monto, 0) > 0
         )
+        )
       )
     )
   `;
@@ -9307,6 +9405,7 @@ function buildMixedSaleConditionSql(alias = 'v') {
 function buildCashAmountSql(alias = 'v') {
   return `
     CASE
+      WHEN COALESCE(${alias}.folio_ticket, '') LIKE 'ANULADA-%' THEN 0
       WHEN EXISTS (
         SELECT 1
         FROM venta_pagos vp_exists
@@ -9348,6 +9447,7 @@ function buildCashAmountSql(alias = 'v') {
 function buildCardAmountSql(alias = 'v') {
   return `
     CASE
+      WHEN COALESCE(${alias}.folio_ticket, '') LIKE 'ANULADA-%' THEN 0
       WHEN EXISTS (
         SELECT 1
         FROM venta_pagos vp_exists
@@ -9408,14 +9508,14 @@ async function calculateShiftTotalsByTurno(turnoId, executor = db) {
     `SELECT vp.metodo_pago, COUNT(DISTINCT v.id_venta) AS transacciones, COALESCE(SUM(vp.monto), 0) AS total
      FROM ventas v
      INNER JOIN venta_pagos vp ON vp.venta_id = v.id_venta
-     WHERE v.turno_id = ?
+     WHERE v.turno_id = ? AND COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
      GROUP BY vp.metodo_pago`,
     [safeTurnoId]
   );
   const [totals] = await executor.query(
     `SELECT COUNT(*) AS transacciones, COALESCE(SUM(total), 0) AS total
      FROM ventas
-     WHERE turno_id = ?`,
+     WHERE turno_id = ? AND COALESCE(folio_ticket, '') NOT LIKE 'ANULADA-%'`,
     [safeTurnoId]
   );
   const [cashAndCardRows] = await executor.query(
@@ -9423,13 +9523,13 @@ async function calculateShiftTotalsByTurno(turnoId, executor = db) {
        COALESCE(SUM(${buildCashAmountSql('v')}), 0) AS total_efectivo,
        COALESCE(SUM(${buildCardAmountSql('v')}), 0) AS total_tarjeta
      FROM ventas v
-     WHERE v.turno_id = ?`,
+     WHERE v.turno_id = ? AND COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'`,
     [safeTurnoId]
   );
   const [mixedTotalRows] = await executor.query(
     `SELECT COALESCE(SUM(v.total), 0) AS total_mixto
      FROM ventas v
-     WHERE v.turno_id = ?
+     WHERE v.turno_id = ? AND COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
        AND ${buildMixedSaleConditionSql('v')}`,
     [safeTurnoId]
   );
@@ -9478,7 +9578,7 @@ app.get('/api/reportes/resumen', async (req, res) => {
     return res.status(400).json({ message: 'Parametros desde y hasta son obligatorios' });
   }
 
-  const filters = ['DATE(fecha) BETWEEN ? AND ?'];
+  const filters = ["COALESCE(folio_ticket, '') NOT LIKE 'ANULADA-%'", 'DATE(fecha) BETWEEN ? AND ?'];
   const values = [startDate, endDate];
   if (cajaId) {
     filters.push('caja_id = ?');
@@ -9551,7 +9651,7 @@ app.get('/api/corte/actual', async (req, res) => {
       `SELECT vp.metodo_pago, COUNT(DISTINCT v.id_venta) AS transacciones, COALESCE(SUM(vp.monto), 0) AS total
        FROM ventas v
        INNER JOIN venta_pagos vp ON vp.venta_id = v.id_venta
-       WHERE DATE(v.fecha) = CURDATE() ${whereExtra}
+       WHERE COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND DATE(v.fecha) = CURDATE() ${whereExtra}
        GROUP BY vp.metodo_pago`,
       values
     );
@@ -9559,7 +9659,7 @@ app.get('/api/corte/actual', async (req, res) => {
     const [global] = await db.query(
       `SELECT COUNT(*) AS transacciones, COALESCE(SUM(total), 0) AS total
        FROM ventas
-       WHERE DATE(fecha) = CURDATE() ${whereExtra}`,
+       WHERE COALESCE(folio_ticket, '') NOT LIKE 'ANULADA-%' AND DATE(fecha) = CURDATE() ${whereExtra}`,
       values
     );
 
@@ -9671,6 +9771,7 @@ app.get('/api/corte/historial', async (req, res) => {
        LEFT JOIN ventas v
          ON v.caja_id = c.caja_id
         AND v.usuario_id = c.usuario_id
+        AND COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
         AND DATE(v.fecha) = c.fecha
         AND (
           v.turno_id = c.id_corte
@@ -9742,7 +9843,7 @@ app.get('/api/corte/historial/detalle', async (req, res) => {
       return res.status(400).json({ message: 'No se pudo reconstruir el detalle del corte' });
     }
 
-    const salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
+    const salesWhere = `COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
     const salesParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
     const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
     const movementParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
@@ -10039,6 +10140,7 @@ app.get('/api/corte/rebuild-preview', async (req, res) => {
          SELECT v.turno_id, COUNT(*) AS transacciones, COALESCE(SUM(v.total), 0) AS total_ventas
          FROM ventas v
          WHERE v.fecha BETWEEN ? AND ?
+           AND COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
            AND v.turno_id IS NOT NULL
          GROUP BY v.turno_id
        ) s ON s.turno_id = c.id_corte
@@ -10845,7 +10947,8 @@ app.get('/api/sales/session-history', async (req, res) => {
              v.caja_id, v.usuario_id, ${shiftSelect},
              COALESCE(u.nombre, CONCAT('Usuario ', v.usuario_id)) AS cajero_nombre,
              v.metodo_pago, v.total,
-             COALESCE(v.pago_modificado, 0) AS pago_modificado
+             COALESCE(v.pago_modificado, 0) AS pago_modificado,
+             CASE WHEN COALESCE(v.folio_ticket, '') LIKE 'ANULADA-%' THEN 1 ELSE 0 END AS anulada
       FROM ventas v
       LEFT JOIN usuarios u ON u.id = v.usuario_id
       WHERE DATE(v.fecha) = CURDATE()
@@ -10948,7 +11051,8 @@ app.get('/api/sales/:saleId/detail', async (req, res) => {
               COALESCE(v.pago_modificado, 0) AS pago_modificado,
               DATE_FORMAT(v.pago_modificado_at, '%Y-%m-%d %H:%i:%s') AS pago_modificado_at,
               v.pago_modificado_por,
-              COALESCE(um.nombre, CONCAT('Usuario ', v.pago_modificado_por)) AS pago_modificado_por_nombre
+              COALESCE(um.nombre, CONCAT('Usuario ', v.pago_modificado_por)) AS pago_modificado_por_nombre,
+              CASE WHEN COALESCE(v.folio_ticket, '') LIKE 'ANULADA-%' THEN 1 ELSE 0 END AS anulada
        FROM ventas v
        LEFT JOIN usuarios u ON u.id = v.usuario_id
        LEFT JOIN usuarios um ON um.id = v.pago_modificado_por
@@ -10993,6 +11097,7 @@ app.get('/api/sales/:saleId/detail', async (req, res) => {
         pago_modificado_at: sale.pago_modificado_at || null,
         pago_modificado_por: sale.pago_modificado_por ? Number(sale.pago_modificado_por) : null,
         pago_modificado_por_nombre: String(sale.pago_modificado_por_nombre || '').trim(),
+        anulada: Number(sale.anulada || 0) === 1 ? 1 : 0,
       },
       items: (Array.isArray(itemRows) ? itemRows : []).map((row) => ({
         id_detalle: Number(row.id_detalle || 0),
@@ -11051,7 +11156,7 @@ app.put('/api/sales/:saleId/payment', async (req, res) => {
     await connection.beginTransaction();
 
     const [saleRows] = await connection.query(
-      `SELECT id_venta, fecha, caja_id, usuario_id, turno_id, metodo_pago, total, monto_efectivo, monto_tarjeta,
+      `SELECT id_venta, fecha, caja_id, usuario_id, turno_id, folio_ticket, metodo_pago, total, monto_efectivo, monto_tarjeta,
               COALESCE(pago_modificado, 0) AS pago_modificado
        FROM ventas
        WHERE id_venta = ?
@@ -11063,6 +11168,10 @@ app.put('/api/sales/:saleId/payment', async (req, res) => {
       return res.status(404).json({ message: 'Venta no encontrada' });
     }
     const sale = saleRows[0];
+    if (String(sale.folio_ticket || '').trim().toUpperCase().startsWith('ANULADA-')) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'No se puede editar una venta anulada' });
+    }
 
     if (!isAdmin) {
       const [openRows] = await connection.query(
@@ -11183,6 +11292,157 @@ app.put('/api/sales/:saleId/payment', async (req, res) => {
     }
     console.error('Error al editar forma de pago de venta:', error);
     return res.status(500).json({ message: 'No se pudo editar la forma de pago' });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.post('/api/sales/:saleId/cancel', async (req, res) => {
+  const saleId = toInt(req.params?.saleId);
+  const cajaId = toInt(req.body?.caja ?? req.query?.caja);
+  const cajeroId = toInt(req.body?.cajero ?? req.query?.cajero);
+  const authUserId = toInt(req.user?.sub);
+  const motivo = String(req.body?.motivo || '').trim().slice(0, 500);
+
+  if (!authUserId) return res.status(401).json({ message: 'Sesion invalida' });
+  if (!saleId) return res.status(400).json({ message: 'Venta invalida' });
+  if (motivo.length < 3) return res.status(400).json({ message: 'Indica el motivo de la anulacion' });
+
+  let connection;
+  let emailPayload = null;
+  let actorName = String(req.user?.name || '').trim();
+  try {
+    const [userRows] = await db.query(
+      `SELECT u.id, u.nombre, u.es_administrador,
+              COALESCE(cp.ventas_cancelar_ticket, 0) AS ventas_cancelar_ticket
+       FROM usuarios u
+       LEFT JOIN cajero_permisos cp ON cp.usuario_id = u.id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [authUserId]
+    );
+    if (!userRows.length) return res.status(401).json({ message: 'Usuario no valido' });
+    const actor = userRows[0];
+    actorName = String(actor.nombre || actorName || '').trim();
+    const isAdmin = Number(actor.es_administrador || 0) === 1;
+    const canCancel = isAdmin || Number(actor.ventas_cancelar_ticket || 0) === 1;
+    if (!canCancel) return res.status(403).json({ message: 'No tienes permiso para anular ventas' });
+
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const [saleRows] = await connection.query(
+      `SELECT v.id_venta, v.fecha, v.numero_ticket, v.folio_ticket, v.caja_id, v.usuario_id, v.turno_id,
+              v.metodo_pago, v.total, v.monto_efectivo, v.monto_tarjeta,
+              COALESCE(u.nombre, CONCAT('Usuario ', v.usuario_id)) AS cajero_nombre
+       FROM ventas v
+       LEFT JOIN usuarios u ON u.id = v.usuario_id
+       WHERE v.id_venta = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [saleId]
+    );
+    if (!saleRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Venta no encontrada' });
+    }
+    const sale = saleRows[0];
+    if (String(sale.folio_ticket || '').trim().toUpperCase().startsWith('ANULADA-')) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'La venta ya se encuentra anulada' });
+    }
+    if (!isAdmin
+      && (!cajaId || !cajeroId || cajeroId !== authUserId
+        || Number(sale.caja_id) !== cajaId || Number(sale.usuario_id) !== cajeroId)) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'No autorizado para anular esta venta' });
+    }
+    const [openRows] = await connection.query(
+      `SELECT id_corte, hora_apertura
+       FROM corte_caja
+       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       ORDER BY id_corte DESC LIMIT 1`,
+      [Number(sale.caja_id), Number(sale.usuario_id)]
+    );
+    if (!openRows.length
+      || (Number(sale.turno_id || 0) > 0 && Number(sale.turno_id) !== Number(openRows[0].id_corte))
+      || new Date(sale.fecha).getTime() < new Date(openRows[0].hora_apertura).getTime()) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Solo se pueden anular ventas del turno que permanece abierto' });
+    }
+
+    const [itemRows] = await connection.query(
+      `SELECT d.id_detalle, d.producto_id,
+              COALESCE(NULLIF(d.descripcion, ''), p.descripcion, 'Producto') AS descripcion,
+              COALESCE(d.cantidad, 0) AS cantidad,
+              COALESCE(d.precio_unitario, 0) AS precio_unitario,
+              COALESCE(d.subtotal, 0) AS subtotal,
+              COALESCE(p.utiliza_inventario, 0) AS utiliza_inventario
+       FROM detalle_venta d
+       LEFT JOIN productos p ON p.id_producto = d.producto_id
+       WHERE d.venta_id = ?
+       ORDER BY d.id_detalle ASC
+       FOR UPDATE`,
+      [saleId]
+    );
+    const restoreByProduct = new Map();
+    for (const item of itemRows) {
+      const productId = Number(item.producto_id || 0);
+      const quantity = Number(item.cantidad || 0);
+      if (productId > 0 && Number(item.utiliza_inventario || 0) === 1 && Number.isFinite(quantity) && quantity > 0) {
+        restoreByProduct.set(productId, Number(restoreByProduct.get(productId) || 0) + quantity);
+      }
+    }
+    for (const [productId, quantity] of restoreByProduct.entries()) {
+      await connection.query(
+        'UPDATE productos SET cantidad_actual = cantidad_actual + ? WHERE id_producto = ?',
+        [quantity, productId]
+      );
+    }
+
+    const payments = await fetchSalePaymentAllocations(connection, saleId, sale);
+    const cancelledFolio = `ANULADA-${String(sale.numero_ticket || sale.id_venta)}`.slice(0, 16);
+    if (itemRows.length) {
+      const firstDetail = itemRows[0];
+      const originalDescription = String(firstDetail.descripcion || 'Producto').trim();
+      const cancellationNote = `[ANULADA: ${motivo}] ${originalDescription}`.slice(0, 255);
+      await connection.query(
+        'UPDATE detalle_venta SET descripcion = ? WHERE id_detalle = ?',
+        [cancellationNote, firstDetail.id_detalle]
+      );
+    }
+    const [updateResult] = await connection.query(
+      `UPDATE ventas
+       SET folio_ticket = ?, pago_modificado = 1, pago_modificado_at = NOW(), pago_modificado_por = ?
+       WHERE id_venta = ? AND COALESCE(folio_ticket, '') NOT LIKE 'ANULADA-%'`,
+      [cancelledFolio, authUserId, saleId]
+    );
+    if (Number(updateResult.affectedRows || 0) !== 1) {
+      throw new Error('La venta no pudo marcarse como anulada');
+    }
+    await connection.commit();
+
+    emailPayload = {
+      sale: {
+        ...sale,
+        fecha: sale.fecha instanceof Date
+          ? sale.fecha.toLocaleString('es-CL', { timeZone: 'America/Santiago' })
+          : String(sale.fecha || ''),
+      },
+      items: itemRows,
+      payments,
+      motivo,
+    };
+    Promise.resolve()
+      .then(() => sendSaleCancellationEmail(emailPayload, actorName))
+      .catch((mailError) => console.error('No se pudo enviar correo interno de venta anulada:', mailError?.message || mailError));
+
+    return res.json({ message: 'Venta anulada correctamente', sale_id: saleId });
+  } catch (error) {
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
+    console.error('Error al anular venta:', error);
+    return res.status(500).json({ message: 'No se pudo anular la venta' });
   } finally {
     if (connection) connection.release();
   }
@@ -11317,7 +11577,7 @@ app.get('/api/turno/resumen', async (req, res) => {
     const sessionStart = openShift.hora_apertura;
     const openShiftId = Number(openShift.id_corte || 0);
 
-    let salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = CURDATE()`;
+    let salesWhere = `COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = CURDATE()`;
     const salesParams = [cajaId, cajeroId];
     if (scope === 'session') {
       salesWhere += ' AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)';
@@ -11435,6 +11695,7 @@ app.get('/api/turno/resumen', async (req, res) => {
               ON d.producto_id = p.id_producto
        LEFT JOIN ventas v
               ON v.id_venta = d.venta_id
+             AND COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
              AND v.caja_id = ?
              AND v.usuario_id = ?
              AND DATE(v.fecha) = CURDATE()
@@ -11636,7 +11897,7 @@ app.get('/api/turno/departamentos', async (req, res) => {
 
     const sessionStart = openRows[0].hora_apertura;
     const openShiftId = Number(openRows[0].id_corte || 0);
-    let salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = CURDATE()`;
+    let salesWhere = `COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%' AND v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = CURDATE()`;
     const salesParams = [cajaId, cajeroId];
     if (scope === 'session') {
       salesWhere += ' AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)';
@@ -11801,7 +12062,7 @@ app.get('/api/reportes/ventas-detalle', async (req, res) => {
     return res.status(400).json({ message: 'Parametros desde y hasta son obligatorios en formato YYYY-MM-DD' });
   }
 
-  const filters = ['DATE(v.fecha) BETWEEN ? AND ?'];
+  const filters = ["COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'", 'DATE(v.fecha) BETWEEN ? AND ?'];
   const values = [startDate, endDate];
   if (cajaId) {
     filters.push('v.caja_id = ?');
@@ -12262,7 +12523,7 @@ app.get('/api/export/ventas.csv', async (req, res) => {
     return res.status(400).json({ message: 'Parametros desde y hasta son obligatorios en formato YYYY-MM-DD' });
   }
 
-  const filters = ['DATE(v.fecha) BETWEEN ? AND ?'];
+  const filters = ["COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'", 'DATE(v.fecha) BETWEEN ? AND ?'];
   const values = [startDate, endDate];
   if (cajaId) {
     filters.push('v.caja_id = ?');
@@ -12913,7 +13174,8 @@ app.post('/api/corte/cerrar', async (req, res) => {
     const [totals] = await db.query(
       `SELECT COUNT(*) AS transacciones, COALESCE(SUM(total), 0) AS total
        FROM ventas
-       WHERE caja_id = ? AND usuario_id = ?
+       WHERE COALESCE(folio_ticket, '') NOT LIKE 'ANULADA-%'
+         AND caja_id = ? AND usuario_id = ?
          AND fecha >= ?
          AND (turno_id = ? OR turno_id IS NULL)`,
       [cajaId, cajeroId, shiftStart, shiftId]
@@ -12924,7 +13186,8 @@ app.post('/api/corte/cerrar', async (req, res) => {
          COALESCE(SUM(${buildCashAmountSql('v')}), 0) AS total_efectivo,
          COALESCE(SUM(${buildCardAmountSql('v')}), 0) AS total_tarjeta
        FROM ventas v
-       WHERE v.caja_id = ? AND v.usuario_id = ?
+       WHERE COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
+         AND v.caja_id = ? AND v.usuario_id = ?
          AND v.fecha >= ?
          AND (v.turno_id = ? OR v.turno_id IS NULL)`,
       [cajaId, cajeroId, shiftStart, shiftId]
@@ -12932,7 +13195,8 @@ app.post('/api/corte/cerrar', async (req, res) => {
     const [mixedTotalRows] = await db.query(
       `SELECT COALESCE(SUM(v.total), 0) AS total_mixto
        FROM ventas v
-       WHERE v.caja_id = ? AND v.usuario_id = ?
+       WHERE COALESCE(v.folio_ticket, '') NOT LIKE 'ANULADA-%'
+         AND v.caja_id = ? AND v.usuario_id = ?
          AND v.fecha >= ?
          AND (v.turno_id = ? OR v.turno_id IS NULL)
          AND ${buildMixedSaleConditionSql('v')}`,

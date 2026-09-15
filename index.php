@@ -246,7 +246,7 @@
     <!--fin login-->
 
     <script src="./js/login.js?v=20260327a"></script>
-    <script src="./js/scripts.js?v=20260814b"></script>
+    <script src="./js/scripts.js?v=20260915a"></script>
 
 </body>
 

@@ -551,6 +551,7 @@
                             <div id="sales-history-view-actions" class="sales-history-detail-actions">
                                 <button id="sales-history-reprint-btn" class="btn2" type="button" onclick="reprintSalesHistorySelectedSale()">Reimprimir</button>
                                 <button id="sales-history-enter-edit-btn" class="btn2" type="button" onclick="enterSalesHistoryEditMode()">Editar</button>
+                                <button id="sales-history-cancel-sale-btn" class="btn2 hidden" type="button" onclick="cancelSalesHistorySelectedSale()">Anular venta</button>
                             </div>
                             <div id="sales-history-edit-actions" class="sales-history-detail-actions hidden">
                                 <button id="sales-history-save-payment-btn" class="btn2" type="button" onclick="saveSalesHistoryPaymentUpdate()">Guardar cambios</button>

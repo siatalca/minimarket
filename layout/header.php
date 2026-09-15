@@ -9,7 +9,7 @@
     <!-- Único CSS optimizado -->
     <link rel="stylesheet" href="./css/root.css">
     <link rel="stylesheet" href="./css/styleshome.css?v=20260320b">
-    <link rel="stylesheet" href="./css/panel.css?v=20260320l">
+    <link rel="stylesheet" href="./css/panel.css?v=20260915a">
     <link rel="stylesheet" href="./css/popup.css?v=20260320a">
 
     <!-- Font Awesome -->

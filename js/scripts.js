@@ -8328,6 +8328,23 @@ async function updateSalesHistorySalePayment(saleId, payload = {}) {
     return data;
 }
 
+async function cancelSalesHistorySale(saleId, payload = {}) {
+    const parsedSaleId = Number(saleId || 0);
+    if (!Number.isFinite(parsedSaleId) || parsedSaleId <= 0) {
+        throw new Error('Venta invalida para anular.');
+    }
+    const response = await fetch(API_URL + `api/sales/${encodeURIComponent(parsedSaleId)}/cancel`, {
+        method: 'POST',
+        headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.message || 'No se pudo anular la venta.');
+    }
+    return data;
+}
+
 function getSalesLastTicketStorageKey() {
     const caja = String(localStorage.getItem('n_caja') || localStorage.getItem('caja') || '').trim();
     const cajero = String(localStorage.getItem('id_user') || '').trim();
@@ -8414,8 +8431,9 @@ async function refreshLastSalesTicketInfoCard() {
     }
 
     try {
-        const data = await fetchSalesSessionHistory(1);
-        const rows = Array.isArray(data?.ventas) ? data.ventas : [];
+        const data = await fetchSalesSessionHistory(50);
+        const rows = (Array.isArray(data?.ventas) ? data.ventas : [])
+            .filter((row) => Number(row?.anulada || 0) !== 1);
         if (!rows.length) {
             const key = getSalesLastTicketStorageKey();
             if (key) {
@@ -8476,8 +8494,9 @@ async function reprintLastSaleTicketOrInvoice() {
     };
 
     try {
-        const data = await fetchSalesSessionHistory(1);
-        const rows = Array.isArray(data?.ventas) ? data.ventas : [];
+        const data = await fetchSalesSessionHistory(50);
+        const rows = (Array.isArray(data?.ventas) ? data.ventas : [])
+            .filter((row) => Number(row?.anulada || 0) !== 1);
         if (!rows.length) {
             await notifyReprint('No hay ventas en la sesión para reimprimir.', 'warning');
             return;
@@ -8638,9 +8657,13 @@ function updateSalesHistoryEditControlsState() {
     const cancelBtn = document.getElementById('sales-history-cancel-edit-btn');
     const editBtn = document.getElementById('sales-history-enter-edit-btn');
     const reprintBtn = document.getElementById('sales-history-reprint-btn');
+    const cancelSaleBtn = document.getElementById('sales-history-cancel-sale-btn');
 
     const hasSaleSelected = Number(salesHistorySelectedSaleId || 0) > 0 && !!salesHistorySelectedSaleDetail;
     const isEditMode = Boolean(salesHistoryEditMode && hasSaleSelected);
+    const isCancelledSale = Number(salesHistorySelectedSaleDetail?.sale?.anulada || 0) === 1;
+    const canCancelSale = hasUserPermission('ventas_cancelar_ticket')
+        || Number(localStorage.getItem('user_is_admin') || 0) === 1;
 
     if (viewActions) viewActions.classList.toggle('hidden', !hasSaleSelected || isEditMode);
     if (editActions) editActions.classList.toggle('hidden', !hasSaleSelected || !isEditMode);
@@ -8651,8 +8674,12 @@ function updateSalesHistoryEditControlsState() {
         control.disabled = !isEditMode;
     });
 
-    if (editBtn) editBtn.disabled = !hasSaleSelected;
-    if (reprintBtn) reprintBtn.disabled = !hasSaleSelected || isEditMode;
+    if (editBtn) editBtn.disabled = !hasSaleSelected || isCancelledSale;
+    if (reprintBtn) reprintBtn.disabled = !hasSaleSelected || isEditMode || isCancelledSale;
+    if (cancelSaleBtn) {
+        cancelSaleBtn.classList.toggle('hidden', !canCancelSale || !hasSaleSelected || isEditMode || isCancelledSale);
+        cancelSaleBtn.disabled = !canCancelSale || !hasSaleSelected || isEditMode || isCancelledSale;
+    }
     if (cancelBtn) cancelBtn.disabled = !isEditMode;
 
     if (saveBtn) {
@@ -8690,6 +8717,10 @@ function enterSalesHistoryEditMode() {
         setSalesHistoryEditFeedback('Selecciona una venta para editar.', 'warning');
         return;
     }
+    if (Number(salesHistorySelectedSaleDetail?.sale?.anulada || 0) === 1) {
+        setSalesHistoryEditFeedback('Una venta anulada no se puede editar.', 'warning');
+        return;
+    }
     setSalesHistoryEditMode(true, { restoreInputs: false });
 }
 
@@ -8701,6 +8732,10 @@ async function reprintSalesHistorySelectedSale() {
     const saleId = Number(salesHistorySelectedSaleId || salesHistorySelectedSaleDetail?.sale?.id_venta || 0);
     if (!Number.isFinite(saleId) || saleId <= 0) {
         setSalesHistoryEditFeedback('Selecciona una venta para reimprimir.', 'warning');
+        return;
+    }
+    if (Number(salesHistorySelectedSaleDetail?.sale?.anulada || 0) === 1) {
+        setSalesHistoryEditFeedback('Una venta anulada no se puede reimprimir.', 'warning');
         return;
     }
     const reprintBtn = document.getElementById('sales-history-reprint-btn');
@@ -8875,7 +8910,11 @@ function renderSalesHistoryRows(rows = []) {
         const saleId = Number(row?.id_venta || 0);
         const total = Number(row?.total || 0);
         const dateParts = splitSalesHistoryDateTimeParts(row?.fecha || '');
-        const rowSelectedClass = saleId === salesHistorySelectedSaleId ? 'sales-history-row-selected' : '';
+        const isCancelled = Number(row?.anulada || 0) === 1;
+        const rowSelectedClass = [
+            saleId === salesHistorySelectedSaleId ? 'sales-history-row-selected' : '',
+            isCancelled ? 'sales-history-row-cancelled' : '',
+        ].filter(Boolean).join(' ');
         const ticketLabel = normalizeText(row?.folio_ticket || row?.numero_ticket || String(saleId || '-')) || '-';
         return `
             <tr data-sale-id="${saleId}" class="${rowSelectedClass}">
@@ -8886,7 +8925,7 @@ function renderSalesHistoryRows(rows = []) {
                     </div>
                 </td>
                 <td style="text-align:center;">${escapeHtml(ticketLabel)}</td>
-                <td>${escapeHtml(normalizeText(normalizeSalesPaymentMethodLabel(row?.metodo_pago || '-')))}</td>
+                <td>${isCancelled ? '<strong class="sales-history-cancelled-label">ANULADA</strong>' : escapeHtml(normalizeText(normalizeSalesPaymentMethodLabel(row?.metodo_pago || '-')))}</td>
                 <td style="text-align:right;">$${total.toFixed(0)}</td>
             </tr>
         `;
@@ -8938,8 +8977,13 @@ function renderSalesHistorySaleDetail(detail = {}) {
     const cardInput = document.getElementById('sales-history-payment-card');
     const cashInput = document.getElementById('sales-history-payment-cash');
 
+    const isCancelled = Number(sale?.anulada || 0) === 1;
     const isModified = Number(sale?.pago_modificado || 0) === 1;
-    if (ribbon) ribbon.classList.toggle('hidden', !isModified);
+    if (ribbon) {
+        ribbon.textContent = isCancelled ? 'VENTA ANULADA' : 'VENTA MODIFICADA';
+        ribbon.classList.toggle('sales-history-cancelled-ribbon', isCancelled);
+        ribbon.classList.toggle('hidden', !isModified && !isCancelled);
+    }
 
     if (datetimeEl) datetimeEl.textContent = normalizeText(sale?.fecha || '-');
     if (ticketEl) ticketEl.textContent = normalizeText(sale?.folio_ticket || sale?.numero_ticket || String(sale?.id_venta || '-'));
@@ -8973,7 +9017,7 @@ function renderSalesHistorySaleDetail(detail = {}) {
             paymentsWrap.innerHTML = '<p class="sales-history-payment-item">Sin desglose de pago.</p>';
         } else {
             const modifiedMeta = isModified
-                ? `<p class="sales-history-payment-item"><span>Actualizado</span><strong>${escapeHtml(normalizeText(sale?.pago_modificado_at || ''))}</strong></p>`
+                ? `<p class="sales-history-payment-item"><span>${isCancelled ? 'Anulada' : 'Actualizado'}</span><strong>${escapeHtml(normalizeText(sale?.pago_modificado_at || ''))}</strong></p>`
                 : '';
             paymentsWrap.innerHTML = `
                 ${payments.map((entry) => `
@@ -14396,6 +14440,55 @@ function renderCatalogTableRows(rows) {
         });
     });
     updateCatalogSelectionControls();
+}
+
+async function cancelSalesHistorySelectedSale() {
+    const saleId = Number(salesHistorySelectedSaleId || salesHistorySelectedSaleDetail?.sale?.id_venta || 0);
+    if (!Number.isFinite(saleId) || saleId <= 0) {
+        setSalesHistoryEditFeedback('Selecciona una venta para anular.', 'warning');
+        return;
+    }
+    if (!hasUserPermission('ventas_cancelar_ticket')
+        && Number(localStorage.getItem('user_is_admin') || 0) !== 1) {
+        setSalesHistoryEditFeedback('No tienes permiso para anular ventas.', 'error');
+        return;
+    }
+
+    const sale = salesHistorySelectedSaleDetail?.sale || {};
+    if (Number(sale.anulada || 0) === 1) {
+        setSalesHistoryEditFeedback('La venta ya se encuentra anulada.', 'warning');
+        return;
+    }
+    const ticketLabel = normalizeText(sale.folio_ticket || sale.numero_ticket || String(saleId));
+    const motivo = String(prompt(`Indica el motivo para anular la venta #${ticketLabel}:`, '') || '').trim();
+    if (!motivo) return;
+    if (motivo.length < 3) {
+        setSalesHistoryEditFeedback('El motivo debe tener al menos 3 caracteres.', 'warning');
+        return;
+    }
+
+    const question = `¿Anular la venta #${ticketLabel} por ${formatSalesTicketMoney(sale.total)}?\n\nSe devolverán los productos al inventario y la venta dejará de formar parte del cierre de caja.`;
+    const confirmed = typeof window.appConfirm === 'function'
+        ? await window.appConfirm(question, 'warning', { title: 'Confirmar anulación' })
+        : window.confirm(question);
+    if (!confirmed) return;
+
+    const cancelSaleBtn = document.getElementById('sales-history-cancel-sale-btn');
+    const { caja, cajero } = getSalesSessionIdentity();
+    try {
+        if (cancelSaleBtn) cancelSaleBtn.disabled = true;
+        setSalesHistoryEditFeedback('Anulando venta...', 'info');
+        const result = await cancelSalesHistorySale(saleId, { caja, cajero, motivo });
+        await openSalesSessionHistoryPopup();
+        setSalesHistoryEditFeedback(result?.message || 'Venta anulada correctamente.', 'ok');
+        refreshLastSalesTicketInfoCard().catch(() => {});
+    } catch (error) {
+        console.error('Error anulando venta seleccionada:', error);
+        setSalesHistoryEditFeedback(error.message || 'No se pudo anular la venta.', 'error');
+    } finally {
+        if (cancelSaleBtn) cancelSaleBtn.disabled = false;
+        updateSalesHistoryEditControlsState();
+    }
 }
 
 function updateCatalogSelectionControls() {
