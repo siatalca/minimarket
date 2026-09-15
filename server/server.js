@@ -1115,6 +1115,8 @@ const PRODUCT_DELETION_TEMP_CC = 'oteizanicolas@gmail.com';
 const PRODUCT_DELETION_TEMP_CC_LAST_DATE = '2026-07-31';
 const INVENTORY_ADJUSTMENT_TEMP_CC = 'siatalca@gmail.com';
 const INVENTORY_ADJUSTMENT_TEMP_CC_LAST_DATE = '2026-08-31';
+const SALE_CANCELLATION_TEMP_CC = 'siatalca@gmail.com';
+const SALE_CANCELLATION_TEMP_CC_LAST_DATE = '2026-09-30';
 
 function getSantiagoCalendarDate(date = new Date()) {
   const dateParts = new Intl.DateTimeFormat('en-CA', {
@@ -1358,6 +1360,11 @@ async function sendSaleCancellationEmail(cancellation, requestedBy = '') {
   await transporter.sendMail({
     from: mailBundle.transport.from,
     to,
+    cc: shouldSendTemporaryCopy(
+      SALE_CANCELLATION_TEMP_CC,
+      SALE_CANCELLATION_TEMP_CC_LAST_DATE,
+      cancelledAt
+    ) ? SALE_CANCELLATION_TEMP_CC : undefined,
     subject: `[Minimarket] Venta anulada - Ticket ${ticket || sale.id_venta}`,
     text: [
       'Se anuló una venta en el sistema Minimarket.', '',
