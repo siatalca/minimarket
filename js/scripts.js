@@ -9632,7 +9632,19 @@ function updateInventoryList(products) {
     });
 }
 
-function setInventoryFeedback(message, type = 'info') {
+function setInventoryProductName(productName = '') {
+    const nameElement = document.getElementById('inventory-product-name');
+    if (!nameElement) return;
+    if (window.MinimarketProductNameUi?.applyProductNameDisplay) {
+        window.MinimarketProductNameUi.applyProductNameDisplay(nameElement, productName);
+        return;
+    }
+    const normalizedName = normalizeText(productName).replace(/\s+/g, ' ');
+    nameElement.textContent = normalizedName;
+    nameElement.classList.toggle('hidden', !normalizedName);
+}
+
+function setInventoryFeedback(message, type = 'info', productName = '') {
     const box = document.getElementById('inventory-feedback');
     if (!box) return;
     box.textContent = String(message || '');
@@ -9640,6 +9652,7 @@ function setInventoryFeedback(message, type = 'info') {
     if (type === 'error') box.classList.add('feedback-error');
     if (type === 'ok') box.classList.add('feedback-ok');
     if (type === 'warning') box.classList.add('feedback-warning');
+    setInventoryProductName(productName);
 }
 
 function setInventoryAdjustFeedback(message, type = 'info') {
@@ -10108,7 +10121,8 @@ async function loadInventoryProductByCode() {
         const useInventory = Number(product.utiliza_inventario || 0) === 1;
         if (!useInventory) {
             clearInventoryProductDetails();
-            setInventoryFeedback(`El producto "${normalizeText(product.descripcion || 'Sin nombre')}" no tiene habilitada la opcion de inventario.`, 'warning');
+            const productName = normalizeText(product.descripcion || 'Sin nombre');
+            setInventoryFeedback('El producto no tiene habilitada la opcion de inventario.', 'warning', productName);
             if (codeInput) {
                 codeInput.value = '';
                 setTimeout(() => {
@@ -10128,7 +10142,7 @@ async function loadInventoryProductByCode() {
         if (saveBtn) saveBtn.disabled = false;
         selectedInventoryProduct = product;
         setInventoryNewScanInputLocked(true);
-        setInventoryFeedback(`Producto cargado: ${normalizeText(product.descripcion || '')}.`, 'ok');
+        setInventoryFeedback('Producto cargado.', 'ok', normalizeText(product.descripcion || ''));
         focusInventoryFlowStart('add');
     } catch (error) {
         console.error('Error loadInventoryProductByCode:', error);
@@ -13834,7 +13848,10 @@ async function handleExistingProductCodeOnAdd(redirectPrompt = true) {
 
         const product = data?.product || null;
         const inventoryEnabled = Number(product?.utiliza_inventario || 0) === 1;
-        const msg = `El código ${code} ya está registrado.`;
+        const existingProductName = normalizeText(product?.descripcion || '');
+        const msg = window.MinimarketProductNameUi?.buildExistingProductMessage
+            ? window.MinimarketProductNameUi.buildExistingProductMessage(code, existingProductName)
+            : `El código ${code} ya está registrado${existingProductName ? ` como "${existingProductName}"` : ''}.`;
         setAddProductFeedback('');
 
         if (inventoryEnabled) {

@@ -431,6 +431,13 @@
     max-width: 90vw;
 }
 
+#products-panel #add #product-name {
+    min-height: 52px;
+    font-size: 1.5rem;
+    line-height: 1.25;
+    font-weight: 700;
+}
+
 #products-panel #product-modify-search {
     width: 520px;
     max-width: 90vw;
@@ -879,6 +886,15 @@
     color: #92400e;
 }
 
+#inventory-panel .inventory-product-name {
+    margin-top: 10px;
+    color: #0f172a;
+    font-size: clamp(1.45rem, 2.6vw, 1.85rem);
+    line-height: 1.25;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+}
+
 body.dark #inventory-panel {
     background: linear-gradient(180deg, #1b2430 0%, #1a2330 100%);
     border-color: #334155;
@@ -897,6 +913,10 @@ body.dark #inventory-panel .inventory-section {
 body.dark #inventory-panel .form-row > label,
 body.dark #inventory-panel .product-status-box {
     color: #cbd5e1;
+}
+
+body.dark #inventory-panel .inventory-product-name {
+    color: #f8fafc;
 }
 
 body.dark #inventory-panel .form-row input {

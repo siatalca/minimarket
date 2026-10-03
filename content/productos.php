@@ -19,7 +19,7 @@
             <div class="promo-column">
                 <h4 class="panel-upcoming-title" style="margin-bottom:8px;">Datos del producto</h4>
                 <div class="form-row"><label>C&oacute;digo de barras</label><input type="text" id="product-code" placeholder="C&oacute;digo de barras"></div>
-                <div class="form-row"><label>Descripci&oacute;n</label><input type="text" id="product-name" placeholder="Descripci&oacute;n"></div>
+                <div class="form-row"><label for="product-name">Descripci&oacute;n</label><input type="text" id="product-name" placeholder="Descripci&oacute;n"></div>
                 <div class="form-row">
                     <label>Se vende</label>
                     <div class="product-radio-wrap">

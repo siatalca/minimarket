@@ -28,6 +28,7 @@
                 <button class="btn inv-btn-clear" type="button" onclick="clearInventoryView()">Limpiar</button>
             </div>
             <div id="inventory-feedback" class="product-status-box">Escanea un producto para consultar inventario.</div>
+            <div id="inventory-product-name" class="inventory-product-name hidden" role="status" aria-live="polite" aria-atomic="true"></div>
         </section>
 
         <div id="inventory-edit-panels" class="inventory-edit-panels hidden">
