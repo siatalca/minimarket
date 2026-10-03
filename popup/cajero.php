@@ -363,16 +363,10 @@
         </div>
     </div>
 
-    <script src="../js/functions.js"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/functions.js?v=20261003b"></script>
     <script>
-        const API_URL = (() => {
-            const override = window.localStorage.getItem('api_url');
-            if (override) return override.endsWith('/') ? override : `${override}/`;
-            if (window.location.port === '3002') return `${window.location.origin}/`;
-            const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-            const protocol = isLocalHost ? 'http:' : window.location.protocol;
-            return `${protocol}//${window.location.hostname}:3002/`;
-        })();
+        const API_URL = window.MinimarketApi.resolveApiBase();
 
         const PERMISSION_DEFS = [
             { key: 'ventas_producto_comun', label: 'Utilizar producto comun', group: 'Ventas' },

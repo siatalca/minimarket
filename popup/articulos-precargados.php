@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Articulos precargados</title>
     <link rel="stylesheet" href="../css/popUpStyle.css">
-    <script src="../js/functions.js"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/functions.js?v=20261003b"></script>
     <style>
         .preloaded-wrap {
             max-width: 820px;

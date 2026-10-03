@@ -7,7 +7,8 @@
     <title>Configuración</title>
     <link rel="stylesheet" href="../css/styles.css">
     
-    <script src="../js/functions.js"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/functions.js?v=20261003b"></script>
 </head>
 <body>
     <h1>RECARGAS TELEFONICAS</h1>

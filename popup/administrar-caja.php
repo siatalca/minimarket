@@ -7,7 +7,8 @@
     <title>Administrar cajas</title>
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
-    <script src="../js/functions.js"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/functions.js?v=20261003b"></script>
     <style>
         body {
             padding: 14px 16px;
@@ -288,14 +289,7 @@
     </div>
 
     <script>
-        const API_URL = (() => {
-            const override = window.localStorage.getItem('api_url');
-            if (override) return override.endsWith('/') ? override : `${override}/`;
-            if (window.location.port === '3002') return `${window.location.origin}/`;
-            const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-            const protocol = isLocalHost ? 'http:' : window.location.protocol;
-            return `${protocol}//${window.location.hostname}:3002/`;
-        })();
+        const API_URL = window.MinimarketApi.resolveApiBase();
 
         const slots = Array.from({ length: 8 }, (_, i) => i + 1);
         let boxesByNumber = new Map();

@@ -7,7 +7,7 @@
     <title>Forma de pago</title>
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
-    <script src="../js/functions.js?v=20260411a"></script>
+    <script src="../js/functions.js?v=20261003b"></script>
     <style>
         .settings-shell { max-width: 960px; margin: 0 auto; }
         .settings-grid { display: grid; gap: 12px; }
