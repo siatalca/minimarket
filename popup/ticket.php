@@ -135,6 +135,8 @@
                         <label><input id="ticket-show-box" type="checkbox" checked> Mostrar caja</label><br>
                         <label><input id="ticket-show-payment" type="checkbox" checked> Mostrar metodo de pago</label><br>
                         <label><input id="ticket-include-details" type="checkbox" checked> Incluir detalle de productos por defecto</label><br>
+                        <label><input id="ticket-allow-no-receipt" type="checkbox" checked> Habilitar boton "F2 Finalizar sin comprobante"</label><br>
+                        <p style="margin:2px 0 0 24px; font-size:0.86rem; color:#475569;">Si se desactiva, todas las ventas imprimen comprobante. Aplica a todas las cajas.</p>
 
                         <br>
                         <div style="display:flex; gap:10px; align-items:center; margin-top: 10px; flex-wrap:wrap;">
@@ -151,7 +153,7 @@
 
     <script src="../js/api_base.js?v=20261003a"></script>
     <script src="../js/ticket_print_method.js?v=20261003b"></script>
-    <script src="../js/ticket_settings.js?v=20261003c"></script>
+    <script src="../js/ticket_settings.js?v=20261003d"></script>
 </body>
 </html>
 

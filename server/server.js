@@ -501,6 +501,24 @@ function isAdminSiaUsername(value) {
   return String(value || '').trim().toLowerCase() === ADMIN_SIA_USERNAME;
 }
 
+async function requireAdministrator(req, res) {
+  try {
+    const userId = toInt(req.user?.sub);
+    const [rows] = userId
+      ? await db.query('SELECT user, es_administrador FROM usuarios WHERE id = ? LIMIT 1', [userId])
+      : [[]];
+    const row = rows[0];
+    if (row && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
+      return true;
+    }
+    res.status(403).json({ message: 'Solo un administrador puede cambiar esta configuracion' });
+    return false;
+  } catch (_) {
+    res.status(500).json({ message: 'No se pudo validar el permiso administrativo' });
+    return false;
+  }
+}
+
 async function requireAdminSia(req, res) {
   try {
     const allowed = await isAdminSiaUser(req.user?.sub);
@@ -3597,6 +3615,8 @@ async function ensureOperationalTables() {
     ['cut_show_footer', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER cut_show_department_totals'],
     ['cut_print_labels_json', 'LONGTEXT NULL AFTER cut_show_footer'],
     ['cut_print_styles_json', 'LONGTEXT NULL AFTER cut_print_labels_json'],
+    // Politica del local: permite el boton "F2 Finalizar sin comprobante" en todas las cajas.
+    ['allow_sale_without_receipt', 'TINYINT(1) NOT NULL DEFAULT 1'],
   ];
   for (const [colName, colDef] of cutFormatColumns) {
     if (!psCols.has(colName)) {
@@ -5454,6 +5474,29 @@ app.delete('/api/cajeros/:id', async (req, res) => {
     return res.status(500).json({ error: err.message });
   } finally {
     if (connection) connection.release();
+  }
+});
+
+app.get('/api/sale-receipt-policy', async (_req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT allow_sale_without_receipt FROM personalization_settings WHERE id = 1 LIMIT 1'
+    );
+    const allow = rows.length ? Number(rows[0].allow_sale_without_receipt) === 1 : true;
+    return res.json({ allow_sale_without_receipt: allow ? 1 : 0 });
+  } catch (err) {
+    return res.status(500).json({ message: 'No se pudo obtener la politica de comprobantes' });
+  }
+});
+
+app.put('/api/sale-receipt-policy', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
+  const allow = normalizeBool(req.body?.allow_sale_without_receipt, true) ? 1 : 0;
+  try {
+    await db.query('UPDATE personalization_settings SET allow_sale_without_receipt = ? WHERE id = 1', [allow]);
+    return res.json({ message: 'Politica de comprobantes actualizada', allow_sale_without_receipt: allow });
+  } catch (err) {
+    return res.status(500).json({ message: 'No se pudo guardar la politica de comprobantes' });
   }
 });
 

@@ -7572,7 +7572,39 @@ function setupSystemFunctionKeyShortcuts() {
 }
 
 // Finalizar la venta
+// Politica del local (Configuracion > Ticket): si no se permite vender sin comprobante,
+// el boton F2 se oculta y cualquier intento de finalizar sin comprobante imprime igual.
+let saleWithoutReceiptAllowed = true;
+
+function applySaleReceiptPolicy() {
+    const btn = document.getElementById('finalize-no-receipt-btn');
+    if (btn) btn.classList.toggle('hidden', !saleWithoutReceiptAllowed);
+}
+
+async function refreshSaleReceiptPolicy() {
+    if (!document.getElementById('finalize-no-receipt-btn')) return;
+    try {
+        const response = await fetch(API_URL + 'api/sale-receipt-policy', { headers: withAuthHeaders() });
+        if (response.ok) {
+            const data = await response.json();
+            saleWithoutReceiptAllowed = Number(data.allow_sale_without_receipt) === 1;
+        }
+    } catch (_) {
+        // Sin conexion se mantiene la ultima politica conocida.
+    }
+    applySaleReceiptPolicy();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    refreshSaleReceiptPolicy();
+    window.addEventListener('focus', refreshSaleReceiptPolicy);
+    setInterval(refreshSaleReceiptPolicy, 60000);
+});
+
 async function finalizeSale(printReceipt = true) {
+    if (!printReceipt && !saleWithoutReceiptAllowed) {
+        printReceipt = true;
+    }
     if (!hasUserPermission('ventas_cobrar_ticket')) {
         return;
     }

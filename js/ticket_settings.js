@@ -517,9 +517,40 @@ function fillTicketForm(settings) {
     check('ticket-include-details', settings.include_details_by_default);
 }
 
+async function fetchSaleReceiptPolicy() {
+    const response = await fetch(API_URL + 'api/sale-receipt-policy', { headers: withAuthHeaders() });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || 'No se pudo cargar la politica de comprobantes');
+    return Number(data.allow_sale_without_receipt) === 1;
+}
+
+async function saveSaleReceiptPolicy(allow) {
+    const response = await fetch(API_URL + 'api/sale-receipt-policy', {
+        method: 'PUT',
+        headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ allow_sale_without_receipt: allow ? 1 : 0 }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || 'No se pudo guardar la politica de comprobantes');
+    return data;
+}
+
 async function initTicketForm() {
     const form = document.getElementById('ticket-settings-form');
     if (!form) return;
+    // Politica global (todas las cajas), separada de la configuracion del ticket por caja.
+    const allowNoReceiptInput = document.getElementById('ticket-allow-no-receipt');
+    let initialAllowNoReceipt = null;
+    if (allowNoReceiptInput) {
+        fetchSaleReceiptPolicy()
+            .then((allow) => {
+                allowNoReceiptInput.checked = allow;
+                initialAllowNoReceipt = allow;
+            })
+            .catch(() => {
+                allowNoReceiptInput.disabled = true;
+            });
+    }
     const previewEl = document.getElementById('ticket-preview');
     const paperEl = document.getElementById('ticket-paper');
     const printableEl = document.getElementById('ticket-printable-area');
@@ -730,6 +761,10 @@ async function initTicketForm() {
             await saveTicketSettings(payload);
             currentSettings = payload;
             updatePreview();
+            if (allowNoReceiptInput && initialAllowNoReceipt !== null && allowNoReceiptInput.checked !== initialAllowNoReceipt) {
+                await saveSaleReceiptPolicy(allowNoReceiptInput.checked);
+                initialAllowNoReceipt = allowNoReceiptInput.checked;
+            }
             alert('Configuracion guardada correctamente.');
             if (saveBtn) saveBtn.disabled = false;
         } catch (error) {
