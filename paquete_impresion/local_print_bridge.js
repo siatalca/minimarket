@@ -3,7 +3,7 @@ const cors = require('cors');
 const os = require('os');
 const path = require('path');
 const fs = require('fs/promises');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 const app = express();
 // Chrome (Private Network Access): una pagina publica HTTPS que llama a 127.0.0.1
@@ -54,6 +54,107 @@ function runPowerShell(command) {
     throw new Error('PowerShell no disponible en este sistema operativo');
   }
   return runExecFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command]);
+}
+
+// PowerShell persistente para imprimir: abrir powershell.exe por ticket cuesta 0.5-2.5 s
+// (mas en un Windows recien instalado). El proceso queda abierto y recibe un trabajo por
+// linea: JSON en base64 (evita problemas de codificacion de consola) con el script a ejecutar.
+const PS_WORKER_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  'Add-Type -AssemblyName System.Drawing',
+  'while ($true) {',
+  '  $line = [Console]::In.ReadLine()',
+  '  if ($null -eq $line) { break }',
+  '  $id = 0',
+  '  try {',
+  '    $job = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line)) | ConvertFrom-Json',
+  '    $id = $job.id',
+  '    & ([ScriptBlock]::Create($job.script)) | Out-Null',
+  "    $reply = @{ id = $id; ok = $true }",
+  '  } catch {',
+  "    $reply = @{ id = $id; ok = $false; error = $_.Exception.Message }",
+  '  }',
+  '  [Console]::Out.WriteLine(($reply | ConvertTo-Json -Compress))',
+  '  [Console]::Out.Flush()',
+  '}',
+].join('\n');
+const PS_WORKER_JOB_TIMEOUT_MS = 20000;
+
+let psWorker = null;
+let psWorkerQueue = Promise.resolve();
+
+function startPsWorker() {
+  const encoded = Buffer.from(PS_WORKER_SCRIPT, 'utf16le').toString('base64');
+  const child = spawn('powershell.exe', ['-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const worker = { child, nextId: 1, pending: new Map(), buffer: '' };
+  const failAll = (error) => {
+    worker.pending.forEach(({ reject, timer }) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    worker.pending.clear();
+    if (psWorker === worker) psWorker = null;
+  };
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    worker.buffer += chunk;
+    let index;
+    while ((index = worker.buffer.indexOf('\n')) >= 0) {
+      const line = worker.buffer.slice(0, index).trim();
+      worker.buffer = worker.buffer.slice(index + 1);
+      if (!line) continue;
+      let reply;
+      try {
+        reply = JSON.parse(line);
+      } catch (_) {
+        continue;
+      }
+      const entry = worker.pending.get(Number(reply.id));
+      if (!entry) continue;
+      worker.pending.delete(Number(reply.id));
+      clearTimeout(entry.timer);
+      if (reply.ok) entry.resolve();
+      else entry.reject(new Error(reply.error || 'Error de impresion'));
+    }
+  });
+  child.stderr.on('data', () => {});
+  child.on('error', (err) => failAll(err));
+  child.on('exit', () => failAll(new Error('El proceso de impresion se cerro')));
+  return worker;
+}
+
+function runPrintScriptInWorker(script) {
+  if (!psWorker) psWorker = startPsWorker();
+  const worker = psWorker;
+  return new Promise((resolve, reject) => {
+    const id = worker.nextId++;
+    const timer = setTimeout(() => {
+      worker.pending.delete(id);
+      reject(new Error('Tiempo de impresion agotado'));
+      // Un trabajo colgado bloquearia la cola: se descarta el proceso y se crea otro despues.
+      try { worker.child.kill(); } catch (_) {}
+    }, PS_WORKER_JOB_TIMEOUT_MS);
+    worker.pending.set(id, { resolve, reject, timer });
+    const payload = Buffer.from(JSON.stringify({ id, script }), 'utf8').toString('base64');
+    worker.child.stdin.write(`${payload}\n`);
+  });
+}
+
+// Los trabajos se ejecutan de a uno; si el proceso persistente falla, se usa uno de un solo uso.
+function runPrintScript(script) {
+  const run = psWorkerQueue.then(
+    () => runPrintScriptInWorker(script).catch((err) => {
+      if (/Tiempo de impresion agotado|se cerro/.test(err.message)) {
+        return runPowerShell(script);
+      }
+      throw err;
+    })
+  );
+  psWorkerQueue = run.catch(() => {});
+  return run;
 }
 
 function escapePsSingleQuoted(value) {
@@ -214,6 +315,8 @@ function buildGdiTicketPrintCommand(tempFile, printerName, fontSize = 6.5) {
     `$pd = New-Object System.Drawing.Printing.PrintDocument; ` +
     `$pd.PrinterSettings.PrinterName = '${safePrinter}'; ` +
     `if (-not $pd.PrinterSettings.IsValid) { throw 'Impresora no valida o no disponible'; } ` +
+    // Sin ventana de estado de .NET: cargarla tarda segundos en un Windows recien instalado.
+    `$pd.PrintController = New-Object System.Drawing.Printing.StandardPrintController; ` +
     `$pd.OriginAtMargins = $false; ` +
     `$pd.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0); ` +
     `$handler = [System.Drawing.Printing.PrintPageEventHandler]{ ` +
@@ -289,13 +392,13 @@ async function printTextFileToPrinter({ tempFile, printerName, printEngine, font
       return usedMode;
     }
     if (printEngine === 'gdi') {
-      await runPowerShell(gdiPrintCommand);
+      await runPrintScript(gdiPrintCommand);
       return usedMode;
     }
 
     try {
       // Auto mode: prefer GDI first to avoid margin/crop issues on thermal printers.
-      await runPowerShell(gdiPrintCommand);
+      await runPrintScript(gdiPrintCommand);
       usedMode = 'gdi';
     } catch (_) {
       await runPowerShell(
@@ -421,4 +524,8 @@ app.post('/api/print/ticket', async (req, res) => {
 
 app.listen(PORT, HOST, () => {
   console.log(`Local Print Bridge escuchando en http://${HOST || '0.0.0.0'}:${PORT} (${process.platform})`);
+  if (IS_WINDOWS) {
+    // Precalienta PowerShell y System.Drawing para que el primer ticket no espere el arranque.
+    runPrintScript('$null = New-Object System.Drawing.Printing.PrintDocument').catch(() => {});
+  }
 });
