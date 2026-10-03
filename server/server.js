@@ -14811,8 +14811,16 @@ app.delete('/api/cajas/:numero', async (req, res) => {
 
     const currentState = Number(existsRows[0]?.estado || 0) === 1 ? 1 : 0;
     if (currentState === 0) {
+      // Segundo paso: una caja ya inactiva se borra para liberar su numero (limite de 8).
+      // Ventas, cortes y movimientos guardan el numero de caja, asi que el historial se conserva.
+      if (!(await isAdminSiaUser(req.user?.sub, connection))) {
+        await connection.rollback();
+        return res.status(403).json({ error: 'Solo admin_sia puede eliminar definitivamente una caja' });
+      }
+      await connection.query('DELETE FROM device_caja_bindings WHERE numero_caja = ?', [cajaId]);
+      await connection.query('DELETE FROM cajas WHERE n_caja = ?', [cajaId]);
       await connection.commit();
-      return res.json({ success: true, mode: 'already_inactive' });
+      return res.json({ success: true, mode: 'deleted' });
     }
 
     await connection.query(

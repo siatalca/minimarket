@@ -522,6 +522,11 @@
                 const assignedBox = getCurrentAssignedBoxNumber();
                 assignInput.checked = assignedBox !== null && assignedBox === selectedBoxNumber;
             }
+            const deleteBtn = document.getElementById('box-delete-btn');
+            if (deleteBtn) {
+                deleteBtn.textContent = box && box.estado !== 1 ? 'Eliminar definitivamente' : 'Desactivar caja';
+                deleteBtn.disabled = !box;
+            }
             syncInitialSnapshot();
         }
 
@@ -688,10 +693,15 @@
                 setMessage('Selecciona una caja para eliminar.', 'err');
                 return;
             }
-            const confirmed = window.confirm(`¿Eliminar la Caja ${selectedBoxNumber}?`);
+            const selectedBoxNumberDeleted = selectedBoxNumber;
+            const box = boxesByNumber.get(selectedBoxNumber);
+            const isInactive = Boolean(box) && box.estado !== 1;
+            const confirmed = window.confirm(isInactive
+                ? `¿Eliminar definitivamente la Caja ${selectedBoxNumber}?\n\nEl numero ${selectedBoxNumber} quedara libre para registrar una caja nueva. Las ventas y cortes historicos de esta caja se conservan. Esta accion no se puede deshacer.`
+                : `¿Desactivar la Caja ${selectedBoxNumber}?\n\nLa caja dejara de poder usarse. Para liberar su numero, eliminala definitivamente despues.`);
             if (!confirmed) return;
 
-            setMessage('Inactivando caja...', '');
+            setMessage(isInactive ? 'Eliminando caja...' : 'Desactivando caja...', '');
             try {
                 const response = await fetch(API_URL + `api/cajas/${selectedBoxNumber}`, {
                     method: 'DELETE',
@@ -705,10 +715,10 @@
 
                 clearSelectionAndEditor();
                 await loadBoxes();
-                if (data.mode === 'already_inactive') {
-                    setMessage('La caja ya estaba inactiva.', 'ok');
+                if (data.mode === 'deleted') {
+                    setMessage(`Caja eliminada. El numero ${selectedBoxNumberDeleted} quedo disponible.`, 'ok');
                 } else {
-                    setMessage('Caja inactivada correctamente.', 'ok');
+                    setMessage('Caja desactivada. Para liberar su numero, seleccionala y eliminala definitivamente.', 'ok');
                 }
             } catch (_) {
                 setMessage('Error de conexion al eliminar la caja.', 'err');
