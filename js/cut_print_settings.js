@@ -77,12 +77,29 @@ function closePopupWindow() {
 function asApiError(error, fallbackMessage) {
     const message = String(error?.message || '').trim();
     if (!message || message.toLowerCase() === 'failed to fetch') {
-        return new Error('No se pudo conectar con la API local (puerto 3002).');
+        return new Error('No se pudo conectar con la API del sistema.');
     }
     return new Error(message || fallbackMessage);
 }
 
 async function printCutFormatTest(payload) {
+    // Dentro del panel, el reporte se arma en el servidor y se imprime con la logica de la
+    // pagina principal (modo navegador o puente local de la caja), igual que un corte real.
+    const host = window.parent !== window ? window.parent : null;
+    if (host && typeof host.printTicketLocalFirst === 'function') {
+        const payloadData = await requestCutFormatTest({ ...(payload || {}), return_payload: true });
+        return host.printTicketLocalFirst({
+            payloadData,
+            localSuccessMessage: 'Formato de corte de prueba enviado a impresion',
+            fallbackEndpoint: 'api/print/cut-format-test',
+            fallbackPayload: payload || {},
+            fallbackErrorMessage: 'No se pudo imprimir formato de corte de prueba',
+        });
+    }
+    return requestCutFormatTest(payload);
+}
+
+async function requestCutFormatTest(payload) {
     try {
         const response = await fetch(API_URL + 'api/print/cut-format-test', {
             method: 'POST',
@@ -810,6 +827,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         refreshPreview();
     });
 
+    let cutTestStatusTimer = null;
+    // Aviso breve junto al boton (sin alert) para no interrumpir la impresion directa.
+    function showCutTestStatus(text) {
+        if (!printBtn) return;
+        let status = document.getElementById('cut-format-test-status');
+        if (!status) {
+            status = document.createElement('span');
+            status.id = 'cut-format-test-status';
+            status.setAttribute('role', 'status');
+            status.style.cssText = 'margin-left:12px; font-weight:600; color:#16a34a;';
+            printBtn.insertAdjacentElement('afterend', status);
+        }
+        status.textContent = text;
+        clearTimeout(cutTestStatusTimer);
+        cutTestStatusTimer = setTimeout(() => { status.textContent = ''; }, 4000);
+    }
+
     printBtn?.addEventListener('click', async () => {
         try {
             printBtn.disabled = true;
@@ -825,8 +859,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (caja) {
                 requestPayload.numero_caja = Number(caja);
             }
-            const data = await printCutFormatTest(requestPayload);
-            alert(data.message || 'Formato de corte de prueba enviado a impresion.');
+            await printCutFormatTest(requestPayload);
+            showCutTestStatus('Prueba enviada a impresion.');
         } catch (error) {
             alert(error.message || 'No se pudo imprimir formato de corte de prueba.');
         } finally {
