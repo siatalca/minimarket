@@ -58,8 +58,14 @@
             <form id="printer-settings-form">
                 <div class="printer-card">
                     <p class="printer-note">Configura la impresora de tickets y opciones de salida compatibles con este sistema.</p>
-                    <p class="printer-note">Si ejecutas <code>iniciar_servicios_ocultos.bat</code> en el equipo cliente se listaran sus impresoras locales y se iniciara el backend. Si no, se imprimira por navegador usando la impresora predeterminada de ese equipo.</p>
-                    <p class="printer-note">Para evitar el dialogo de impresion en modo navegador, abre Chrome de la caja con <code>--kiosk-printing</code>.</p>
+                    <div class="printer-row">
+                        <label for="printer-method">Metodo de impresion en este equipo:</label>
+                        <select id="printer-method" style="min-width:320px;">
+                            <option value="browser">Navegador (impresora predeterminada de Windows)</option>
+                            <option value="bridge">Puente local (programa de impresion instalado en la caja)</option>
+                        </select>
+                        <p id="printer-method-note" class="printer-note"></p>
+                    </div>
                     <div class="printer-row">
                         <label for="ticket-printer-select">Impresora instalada:</label>
                         <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -111,7 +117,8 @@
     </div>
 
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/ticket_settings.js?v=20261003a"></script>
+    <script src="../js/ticket_print_method.js?v=20261003b"></script>
+    <script src="../js/ticket_settings.js?v=20261003b"></script>
 </body>
 </html>
 

@@ -1,0 +1,14 @@
+{
+  "name": "minimarket-impresion-local",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Puente de impresion local para cajas de Minimarket centralizado",
+  "main": "local_print_bridge.js",
+  "scripts": {
+    "start": "node local_print_bridge.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}

@@ -5706,21 +5706,8 @@ async function printTicketTextInBrowser(ticketText = '', documentTitle = 'Ticket
     if (!String(ticketText || '').trim()) {
         throw new Error('No hay contenido para imprimir');
     }
-    const printWindow = window.open('', '_blank', 'width=460,height=720');
-    if (!printWindow) {
-        throw new Error('El navegador bloqueo la ventana de impresion local. Habilita popups para este sitio.');
-    }
     const html = buildBrowserTicketPrintHtml(ticketText, documentTitle, options);
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-        try {
-            printWindow.print();
-        } catch (_) {
-        }
-    }, 180);
+    await window.MinimarketPrint.printHtmlDocument(html);
     return { success: true, mode: 'browser_local', printer: 'default_browser_printer' };
 }
 
@@ -5775,6 +5762,22 @@ async function printTicketLocalFirst({
     fallbackPayload,
     fallbackErrorMessage,
 }) {
+    // Modo navegador: no se consulta 127.0.0.1 (evita el aviso de red local de Chrome).
+    if (window.MinimarketPrint.isBrowserMethod()) {
+        await printTicketTextInBrowser(payloadData.ticket_text, localSuccessMessage, {
+            paperWidthMm: payloadData.paper_width_mm,
+            fontSizePt: payloadData.font_size,
+            fontBoostPx: payloadData.font_size_adjust_px || 0,
+            cutPrintLabels: payloadData.cut_print_labels || null,
+            cutPrintStyles: payloadData.cut_print_styles || null,
+        });
+        return {
+            message: localSuccessMessage,
+            printer: 'predeterminada de Windows',
+            mode: 'browser_local',
+        };
+    }
+
     const bridgeBase = await resolveLocalPrintBridgeBase(true);
     const forceLocal = shouldForceLocalTicketPrinting();
     const hasConfiguredPrinter = Boolean(String(payloadData?.printer || '').trim());

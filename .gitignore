@@ -19,3 +19,5 @@ paquete_cliente_db/server/.jwt_secret
 .DS_Store
 Thumbs.db
 .vscode/
+paquete_impresion/node_modules/
+paquete_impresion/logs/

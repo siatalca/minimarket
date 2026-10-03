@@ -92,21 +92,8 @@ async function printTicketTextInBrowser(ticketText = '', documentTitle = 'Ticket
     if (!String(ticketText || '').trim()) {
         throw new Error('No hay contenido para imprimir');
     }
-    const printWindow = window.open('', '_blank', 'width=460,height=720');
-    if (!printWindow) {
-        throw new Error('El navegador bloqueo la ventana de impresion local. Habilita popups para este sitio.');
-    }
     const html = buildBrowserTicketPrintHtml(ticketText, documentTitle, options);
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-        try {
-            printWindow.print();
-        } catch (_) {
-        }
-    }, 180);
+    await window.MinimarketPrint.printHtmlDocument(html);
     return { success: true, mode: 'browser_local', printer: 'default_browser_printer' };
 }
 
@@ -216,6 +203,10 @@ async function saveTicketSettings(payload) {
 }
 
 async function fetchPrinters() {
+    if (window.MinimarketPrint.isBrowserMethod()) {
+        lastPrintersSource = 'browser_local';
+        return [];
+    }
     const localBridge = await resolveLocalPrintBridgeBase(true);
     if (!localBridge) {
         lastPrintersSource = 'browser_local';
@@ -659,6 +650,16 @@ async function initTicketForm() {
                 throw new Error('No se pudo preparar el ticket de prueba');
             }
 
+            if (window.MinimarketPrint.isBrowserMethod()) {
+                await printTicketTextInBrowser(data.ticket_text, 'Prueba de ticket', {
+                    paperWidthMm: data.paper_width_mm,
+                    fontSizePt: data.font_size,
+                    fontBoostPx: data.font_size_adjust_px ?? payload.font_size_adjust_px ?? 0,
+                });
+                alert('Prueba enviada por el navegador a la impresora predeterminada de Windows.');
+                return;
+            }
+
             const localBridge = await resolveLocalPrintBridgeBase(true);
             const forceLocal = shouldForceLocalTicketPrinting();
             if (forceLocal) {
@@ -740,6 +741,9 @@ async function initPrinterForm() {
     let localPrinterList = [];
 
     function getNoBridgeHintMessage() {
+        if (window.MinimarketPrint.isBrowserMethod()) {
+            return 'Impresion por navegador: se usa la impresora predeterminada de Windows de este equipo.';
+        }
         if (shouldForceLocalTicketPrinting()) {
             return 'No hay bridge local en esta caja. Ejecuta iniciar_servicios_ocultos.bat para listar impresoras e imprimir directo.';
         }
@@ -752,6 +756,31 @@ async function initPrinterForm() {
             hint.textContent = message || getNoBridgeHintMessage();
         }
     }
+
+    const methodSelect = document.getElementById('printer-method');
+    const methodNote = document.getElementById('printer-method-note');
+
+    function renderPrintMethod() {
+        const isBrowser = window.MinimarketPrint.isBrowserMethod();
+        if (methodSelect) methodSelect.value = window.MinimarketPrint.getMethod();
+        if (printEngineSelect) printEngineSelect.disabled = isBrowser;
+        if (methodNote) {
+            methodNote.innerHTML = isBrowser
+                ? 'Imprime en la impresora <b>predeterminada de Windows</b>. Para que salga sin dialogo, abre Chrome con <code>--kiosk-printing</code>. Este ajuste se guarda solo en este equipo.'
+                : 'Requiere el programa de impresion local ejecutandose en esta caja (127.0.0.1:7357). Este ajuste se guarda solo en este equipo.';
+        }
+    }
+
+    renderPrintMethod();
+    methodSelect?.addEventListener('change', async () => {
+        window.MinimarketPrint.setMethod(methodSelect.value);
+        renderPrintMethod();
+        try {
+            await refreshPrinters();
+        } catch (error) {
+            applyNoLocalPrinterState(error.message || '');
+        }
+    });
 
     async function refreshPrinters() {
         const printers = await fetchPrinters();
