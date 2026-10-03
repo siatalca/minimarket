@@ -184,6 +184,23 @@
             color: #b91c1c;
         }
 
+        .box-limit-card {
+            margin-bottom: 12px;
+        }
+
+        .box-limit-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+
+        .box-limit-row input {
+            width: 90px;
+            text-align: center;
+        }
+
         body.dark .box-admin-card {
             background: #111c2f;
             border-color: #263952;
@@ -236,6 +253,15 @@
         <h2 class="box-admin-title">Administrar Cajas</h2>
         <div class="box-admin-body">
         <p class="box-admin-summary" id="box-admin-summary">Cargando cajas habilitadas...</p>
+        <!-- Solo se muestra si el backend confirma que la sesion es admin_sia -->
+        <div class="box-admin-card box-limit-card hidden" id="box-limit-card">
+            <label for="box-limit-input"><strong>Limite de cajas activas</strong> (solo admin_sia)</label>
+            <div class="box-limit-row">
+                <input type="number" id="box-limit-input" min="1" max="8" step="1">
+                <button type="button" class="btn" id="box-limit-save-btn">Guardar limite</button>
+                <span id="box-limit-info" class="box-admin-msg"></span>
+            </div>
+        </div>
         <div class="box-admin-layout">
             <div class="box-admin-card">
                 <div class="box-admin-toolbar">
@@ -540,6 +566,7 @@
 
         async function loadBoxes() {
             setMessage('');
+            loadBoxLimit();
             try {
                 const response = await fetch(API_URL + 'api/getCajas', {
                     headers: withAuthHeaders(),
@@ -725,8 +752,61 @@
             }
         }
 
+        function setBoxLimitInfo(text, type = '') {
+            const el = document.getElementById('box-limit-info');
+            if (!el) return;
+            el.textContent = text;
+            el.className = `box-admin-msg ${type}`.trim();
+        }
+
+        // El backend responde 403 a cualquiera que no sea admin_sia: el control queda oculto.
+        async function loadBoxLimit() {
+            const card = document.getElementById('box-limit-card');
+            if (!card) return;
+            try {
+                const response = await fetch(API_URL + 'api/cajas-limit', { headers: withAuthHeaders() });
+                if (!response.ok) {
+                    card.classList.add('hidden');
+                    return;
+                }
+                const data = await response.json();
+                const input = document.getElementById('box-limit-input');
+                if (input) {
+                    input.max = String(data.max_permitido || 8);
+                    input.value = String(data.max_cajas_activas || 4);
+                }
+                setBoxLimitInfo(`Activas ahora: ${data.cajas_activas} de ${data.max_cajas_activas}.`);
+                card.classList.remove('hidden');
+            } catch (_) {
+                card.classList.add('hidden');
+            }
+        }
+
+        async function saveBoxLimit() {
+            const input = document.getElementById('box-limit-input');
+            const value = Number.parseInt(input?.value || '', 10);
+            try {
+                const response = await fetch(API_URL + 'api/cajas-limit', {
+                    method: 'PUT',
+                    headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ max_cajas_activas: value }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    setBoxLimitInfo(data.message || 'No se pudo guardar el limite.', 'err');
+                    return;
+                }
+                await loadBoxLimit();
+                setBoxLimitInfo(`Limite guardado: ${data.max_cajas_activas} cajas activas.`, 'ok');
+            } catch (_) {
+                setBoxLimitInfo('Error de conexion al guardar el limite.', 'err');
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
             applyPopupTheme();
+            loadBoxLimit();
+            document.getElementById('box-limit-save-btn')?.addEventListener('click', saveBoxLimit);
             buildBoxNumberOptions();
             setEditorVisible(false);
             refreshFormButtonsState();

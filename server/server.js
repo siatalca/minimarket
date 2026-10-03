@@ -393,6 +393,9 @@ function isValidCajaNumber(value) {
 }
 
 const MAX_ACTIVE_BRANCHES_DEFAULT = 3;
+// Cajas activas permitidas por defecto; solo admin_sia puede cambiarlo (system_business_limits).
+const MAX_ACTIVE_BOXES_DEFAULT = 4;
+const MAX_BOX_NUMBER = 8;
 const BRANCH_CREATOR_CONTACT_DEFAULT = 'SIA';
 
 function normalizeBranchCode(rawValue) {
@@ -483,6 +486,13 @@ async function isAdminSiaUser(userId, executor = db) {
   );
   if (!rows.length) return false;
   return String(rows[0]?.user || '').trim().toLowerCase() === 'admin_sia';
+}
+
+// La cuenta admin_sia (soporte SIA) no aparece en listas ni puede tocarla otro usuario.
+const ADMIN_SIA_USERNAME = 'admin_sia';
+
+function isAdminSiaUsername(value) {
+  return String(value || '').trim().toLowerCase() === ADMIN_SIA_USERNAME;
 }
 
 async function requireAdminSia(req, res) {
@@ -4536,6 +4546,7 @@ async function bootstrapDatabase() {
   connection.release();
   await ensureOperationalTables();
   await ensureInfoOwnerColumns();
+  await ensureBoxLimitColumn();
 }
 
 function startApiServer() {
@@ -4663,6 +4674,45 @@ async function ensureInfoOwnerColumns() {
   }
 }
 
+async function ensureBoxLimitColumn() {
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'system_business_limits' AND COLUMN_NAME = 'max_cajas_activas'`,
+    [config.db.database]
+  );
+  if (!rows.length) {
+    await db.query(
+      `ALTER TABLE system_business_limits
+       ADD COLUMN max_cajas_activas INT NOT NULL DEFAULT ${MAX_ACTIVE_BOXES_DEFAULT} AFTER max_sucursales`
+    );
+  }
+}
+
+async function getMaxActiveBoxes(executor = db) {
+  const [rows] = await executor.query(
+    'SELECT max_cajas_activas FROM system_business_limits WHERE id = 1 LIMIT 1'
+  );
+  const value = toInt(rows[0]?.max_cajas_activas);
+  return value && value > 0 ? Math.min(value, MAX_BOX_NUMBER) : MAX_ACTIVE_BOXES_DEFAULT;
+}
+
+// Devuelve un mensaje si activar `cajaId` supera el limite; null si se permite.
+// El limite exacto solo se muestra a admin_sia.
+async function checkBoxActivationLimit(executor, cajaId, userId) {
+  const maxActive = await getMaxActiveBoxes(executor);
+  const [countRows] = await executor.query(
+    'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ?',
+    [cajaId]
+  );
+  const activeOthers = Number(countRows[0]?.total || 0);
+  if (activeOthers < maxActive) return null;
+  if (await isAdminSiaUser(userId, executor)) {
+    return `Limite alcanzado: maximo ${maxActive} cajas activas. Aumentalo en "Limite de cajas activas".`;
+  }
+  return 'Se alcanzo el maximo de cajas activas permitidas. Contacta a SIA para ampliarlo.';
+}
+
 function omitInfoOwnerColumns(row) {
   if (!row || typeof row !== 'object') return row;
   const copy = { ...row };
@@ -4683,6 +4733,35 @@ app.get('/api/getInfo', async (req, res) => {
     res.json(results.map(omitInfoOwnerColumns));
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/cajas-limit', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  try {
+    const maxActive = await getMaxActiveBoxes();
+    const [countRows] = await db.query('SELECT COUNT(*) AS total FROM cajas WHERE estado = 1');
+    return res.json({
+      max_cajas_activas: maxActive,
+      cajas_activas: Number(countRows[0]?.total || 0),
+      max_permitido: MAX_BOX_NUMBER,
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'No se pudo obtener el limite de cajas' });
+  }
+});
+
+app.put('/api/cajas-limit', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  const maxActive = toInt(req.body?.max_cajas_activas);
+  if (!maxActive || maxActive < 1 || maxActive > MAX_BOX_NUMBER) {
+    return res.status(400).json({ message: `El limite debe estar entre 1 y ${MAX_BOX_NUMBER}` });
+  }
+  try {
+    await db.query('UPDATE system_business_limits SET max_cajas_activas = ? WHERE id = 1', [maxActive]);
+    return res.json({ message: 'Limite de cajas actualizado', max_cajas_activas: maxActive });
+  } catch (err) {
+    return res.status(500).json({ message: 'No se pudo guardar el limite de cajas' });
   }
 });
 
@@ -5136,7 +5215,8 @@ app.get('/api/usuarios', async (req, res) => {
     const [results] = await db.query(
       'SELECT id, nombre, user, estado_usuario, es_administrador FROM usuarios ORDER BY nombre ASC'
     );
-    return res.json(results);
+    const showAdminSia = await isAdminSiaUser(req.user?.sub);
+    return res.json(showAdminSia ? results : results.filter((row) => !isAdminSiaUsername(row.user)));
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -5152,7 +5232,9 @@ app.get('/api/cajeros', async (req, res) => {
        LEFT JOIN cajero_permisos p ON p.usuario_id = u.id
        ORDER BY u.es_administrador DESC, u.nombre ASC, u.id ASC`
     );
-    const formatted = rows.map((row) => {
+    const showAdminSia = await isAdminSiaUser(req.user?.sub);
+    const visibleRows = showAdminSia ? rows : rows.filter((row) => !isAdminSiaUsername(row.user));
+    const formatted = visibleRows.map((row) => {
       const permissions = {};
       CASHIER_PERMISSION_FIELDS.forEach((field) => {
         permissions[field] = Number(row[field] || 0);
@@ -5182,6 +5264,9 @@ app.post('/api/cajeros', async (req, res) => {
 
   if (!username || !nombre || !plainPassword || plainPassword.length < 4) {
     return res.status(400).json({ error: 'Datos de cajero inválidos' });
+  }
+  if (isAdminSiaUsername(username)) {
+    return res.status(409).json({ error: 'Nombre de usuario no disponible' });
   }
 
   let connection;
@@ -5242,10 +5327,20 @@ app.put('/api/cajeros/:id', async (req, res) => {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    const [existsRows] = await connection.query('SELECT id FROM usuarios WHERE id = ? LIMIT 1', [userId]);
-    if (!existsRows.length) {
+    const [existsRows] = await connection.query('SELECT id, user FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+    const targetIsAdminSia = existsRows.length > 0 && isAdminSiaUsername(existsRows[0].user);
+    const requesterIsAdminSia = await isAdminSiaUser(req.user?.sub, connection);
+    if (!existsRows.length || (targetIsAdminSia && !requesterIsAdminSia)) {
       await connection.rollback();
       return res.status(404).json({ error: 'Cajero no encontrado' });
+    }
+    if (targetIsAdminSia && (!isAdminSiaUsername(username) || !estadoUsuario || !esAdministrador)) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'La cuenta admin_sia debe conservar su usuario, estar activa y ser administrador' });
+    }
+    if (!targetIsAdminSia && isAdminSiaUsername(username)) {
+      await connection.rollback();
+      return res.status(409).json({ error: 'Nombre de usuario no disponible' });
     }
 
     const [dupRows] = await connection.query('SELECT id FROM usuarios WHERE LOWER(user) = LOWER(?) AND id <> ? LIMIT 1', [username, userId]);
@@ -5308,6 +5403,14 @@ app.delete('/api/cajeros/:id', async (req, res) => {
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
+    const [targetRows] = await connection.query('SELECT user FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+    if (targetRows.length && isAdminSiaUsername(targetRows[0].user)) {
+      await connection.rollback();
+      const requesterIsAdminSia = await isAdminSiaUser(req.user?.sub);
+      return requesterIsAdminSia
+        ? res.status(400).json({ error: 'La cuenta admin_sia no se puede eliminar' })
+        : res.status(404).json({ error: 'Cajero no encontrado' });
+    }
     await connection.query('DELETE FROM cajero_permisos WHERE usuario_id = ?', [userId]);
     const [result] = await connection.query('DELETE FROM usuarios WHERE id = ?', [userId]);
     if (!result.affectedRows) {
@@ -14653,6 +14756,12 @@ app.post('/api/addCaja', async (req, res) => {
     if (!branchRows.length) {
       return res.status(400).json({ error: 'Sucursal no valida' });
     }
+    if (boxState) {
+      const limitError = await checkBoxActivationLimit(db, cajaId, req.user?.sub);
+      if (limitError) {
+        return res.status(409).json({ error: limitError });
+      }
+    }
     await db.query(
       'INSERT INTO cajas (n_caja, nombre_caja, sucursal_id, estado ) VALUES (?, ?, ?, ?)',
       [cajaId, cajaName, branchId, boxState]
@@ -14714,9 +14823,18 @@ app.post('/api/cajas/upsert', async (req, res) => {
     }
 
     const [existsRows] = await connection.query(
-      'SELECT id_caja FROM cajas WHERE n_caja = ? LIMIT 1',
+      'SELECT id_caja, estado FROM cajas WHERE n_caja = ? LIMIT 1',
       [cajaId]
     );
+
+    const wasActive = existsRows.length > 0 && Number(existsRows[0]?.estado || 0) === 1;
+    if (boxState && !wasActive) {
+      const limitError = await checkBoxActivationLimit(connection, cajaId, req.user?.sub);
+      if (limitError) {
+        await connection.rollback();
+        return res.status(409).json({ error: limitError });
+      }
+    }
 
     let mode = 'updated';
     if (existsRows.length > 0) {
