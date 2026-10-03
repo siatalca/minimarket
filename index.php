@@ -5,6 +5,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Login - Minimarket</title>
+    <link rel="icon" href="./favicon.ico?v=20261003a" sizes="any">
+    <link rel="apple-touch-icon" href="./img/cajero-automatico.png">
 
     <!-- Asegúrate de que root.css vaya primero -->
     <link rel="stylesheet" href="./css/root.css">
