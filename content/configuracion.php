@@ -76,6 +76,10 @@
             <h3 class="sub">Personalizacion</h3>
             <ul class="panel-grid">
                 <!-- (items originales) -->
+                <li class="panel-item" data-admin-sia-only="1" onclick="open_w('datos-negocio')">
+                    <img src="https://cdn-icons-gif.flaticon.com/11188/11188736.gif" alt="">
+                    <span>Datos del<br>negocio</span>
+                </li>
                 <li class="panel-item" onclick="open_w('logotipo-programa')">
                     <img src="https://cdn-icons-gif.flaticon.com/18549/18549235.gif" alt="">
                     <span>Logotipo</span>

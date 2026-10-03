@@ -7,7 +7,7 @@
     <title>Actualizaciones automaticas</title>
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261003b"></script>
+    <script src="../js/functions.js?v=20261003c"></script>
     <style>
         .updates-wrap { max-width: 900px; margin: 0 auto; }
         .updates-card { border: 1px solid #d1d5db; border-radius: 10px; background: #fff; padding: 16px; margin-bottom: 12px; }

@@ -7,7 +7,7 @@
     <title>Sincronizar nube</title>
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261003b"></script>
+    <script src="../js/functions.js?v=20261003c"></script>
     <style>
         .cloud-wrap { max-width: 760px; margin: 0 auto; }
         .cloud-card { border:1px solid #d1d5db; border-radius:10px; background:#fff; padding:16px; }

@@ -326,6 +326,7 @@ function open_w(popUpReference) {
     'corte',
     'simbolo-moneda',
     'unidad-medida',
+    'datos-negocio',
     'impresora',
     'lector-codigo',
     'cajon-dinero',

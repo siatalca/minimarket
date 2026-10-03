@@ -7,7 +7,7 @@
     <title>Unidad de medida</title>
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
-    <script src="../js/functions.js?v=20261003b"></script>
+    <script src="../js/functions.js?v=20261003c"></script>
     <style>
         .unit-shell { max-width: 760px; margin: 0 auto; }
         .unit-card {

@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261003b"></script>
+    <script src="../js/functions.js?v=20261003c"></script>
     <style>
         body {
             padding: 14px 16px;

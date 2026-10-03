@@ -4535,6 +4535,7 @@ async function bootstrapDatabase() {
   console.log('Conexion exitosa a la base de datos.');
   connection.release();
   await ensureOperationalTables();
+  await ensureInfoOwnerColumns();
 }
 
 function startApiServer() {
@@ -4638,6 +4639,39 @@ app.post('/api/departamentos', async (req, res) => {
   }
 });
 
+// Datos del dueno del local: se guardan en `info` pero solo admin_sia los ve y edita.
+const INFO_OWNER_COLUMNS = {
+  direccion: 'VARCHAR(200) NULL',
+  dueno_nombre: 'VARCHAR(120) NULL',
+  dueno_rut: 'VARCHAR(12) NULL',
+  dueno_telefono: 'VARCHAR(20) NULL',
+  dueno_mail: 'VARCHAR(180) NULL',
+};
+
+async function ensureInfoOwnerColumns() {
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'info'`,
+    [config.db.database]
+  );
+  const current = new Set(rows.map((row) => row.COLUMN_NAME));
+  for (const [column, definition] of Object.entries(INFO_OWNER_COLUMNS)) {
+    if (!current.has(column)) {
+      await db.query(`ALTER TABLE info ADD COLUMN ${column} ${definition}`);
+    }
+  }
+}
+
+function omitInfoOwnerColumns(row) {
+  if (!row || typeof row !== 'object') return row;
+  const copy = { ...row };
+  Object.keys(INFO_OWNER_COLUMNS).filter((column) => column !== 'direccion').forEach((column) => {
+    delete copy[column];
+  });
+  return copy;
+}
+
 // -----------------buscar toda la informacion del local
 app.get('/api/getInfo', async (req, res) => {
   try {
@@ -4646,9 +4680,77 @@ app.get('/api/getInfo', async (req, res) => {
        WHERE id_info = 1
        LIMIT 1`
     );
-    res.json(results);
+    res.json(results.map(omitInfoOwnerColumns));
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/business-owner-settings', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  try {
+    const [rows] = await db.query(
+      `SELECT nombre, telefono, mail, tipo_local, direccion,
+              dueno_nombre, dueno_rut, dueno_telefono, dueno_mail
+       FROM info
+       WHERE id_info = 1
+       LIMIT 1`
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Datos del negocio no disponibles' });
+    }
+    const row = rows[0];
+    return res.json({
+      ...row,
+      dueno_rut: row.dueno_rut ? dteModule.formatRutForDisplay(row.dueno_rut) : '',
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error al obtener datos del negocio' });
+  }
+});
+
+app.put('/api/business-owner-settings', async (req, res) => {
+  if (!(await requireAdminSia(req, res))) return;
+  const body = req.body || {};
+  const nombre = toText(body.nombre, 255);
+  const telefono = toText(String(body.telefono ?? ''), 20);
+  const mail = toText(body.mail, 255);
+  const tipoLocal = toText(body.tipo_local, 100);
+  const direccion = toText(body.direccion, 200);
+  const duenoNombre = toText(body.dueno_nombre, 120);
+  const duenoRutRaw = toText(body.dueno_rut, 20);
+  const duenoTelefono = toText(String(body.dueno_telefono ?? ''), 20);
+  const duenoMail = toText(body.dueno_mail, 180);
+
+  if (!nombre || !telefono || !mail || !tipoLocal) {
+    return res.status(400).json({ message: 'Nombre, telefono, correo y rubro del negocio son obligatorios' });
+  }
+  if (!isValidEmail(mail)) {
+    return res.status(400).json({ message: 'Correo del negocio invalido' });
+  }
+  if (duenoMail && !isValidEmail(duenoMail)) {
+    return res.status(400).json({ message: 'Correo del dueno invalido' });
+  }
+  if (duenoRutRaw && !dteModule.isValidRut(duenoRutRaw)) {
+    return res.status(400).json({ message: 'RUT del dueno invalido' });
+  }
+  const duenoRut = duenoRutRaw ? dteModule.normalizeRut(duenoRutRaw) : '';
+
+  try {
+    const [result] = await db.query(
+      `UPDATE info
+       SET nombre = ?, telefono = ?, mail = ?, tipo_local = ?, direccion = ?,
+           dueno_nombre = ?, dueno_rut = ?, dueno_telefono = ?, dueno_mail = ?
+       WHERE id_info = 1`,
+      [nombre, telefono, mail, tipoLocal, direccion || null,
+        duenoNombre || null, duenoRut || null, duenoTelefono || null, duenoMail || null]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: 'Datos del negocio no disponibles' });
+    }
+    return res.json({ message: 'Datos del negocio actualizados' });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error al guardar datos del negocio' });
   }
 });
 
