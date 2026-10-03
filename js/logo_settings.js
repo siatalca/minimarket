@@ -4,14 +4,7 @@ const LOGO_TARGET_HEIGHT = 44;
 let currentSourceLogo = '';
 let cropState = { zoom: 1, offsetX: 0, offsetY: 0 };
 
-const API_URL = (() => {
-    const override = window.localStorage.getItem('api_url');
-    if (override) return override.endsWith('/') ? override : `${override}/`;
-    if (window.location.port === '3002') return `${window.location.origin}/`;
-    const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    const protocol = isLocalHost ? 'http:' : window.location.protocol;
-    return `${protocol}//${window.location.hostname}:3002/`;
-})();
+const API_URL = window.MinimarketApi.resolveApiBase();
 
 function withAuthHeaders(headers = {}) {
     const token = localStorage.getItem('token');

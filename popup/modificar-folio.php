@@ -165,6 +165,7 @@
         </section>
     </div>
 
-    <script src="../js/folio_settings.js?v=20260222a"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/folio_settings.js?v=20261003a"></script>
 </body>
 </html>

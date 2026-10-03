@@ -436,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!tabs.length || !contents?.length) return; // nada que hacer
 
-        // 2) Asigna el evento click a cada pestaÃƒÂ±a
+        // 2) Asigna el evento click a cada pestaña
         tabs.forEach((tab, idx) => {
             tab.addEventListener('click', () => {
 
@@ -463,36 +463,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-// MiniÃ¢â‚¬â€˜script para conmutar pestaÃƒÂ±as (sin librerÃƒÂ­as externas) -->
+// Mini-script para conmutar pestañas (sin librerías externas) -->
 function showTab(index) {
-  // Obtener todas las pestaÃƒÂ±as y el contenido
+  // Obtener todas las pestañas y el contenido
   const tabs = document.querySelectorAll('.tabs');
   const tabContents = document.querySelectorAll('.tab-content');
 
-  // Eliminar la clase activa de todas las pestaÃƒÂ±as y contenido
+  // Eliminar la clase activa de todas las pestañas y contenido
   tabs.forEach(tab => tab.classList.remove('active'));
   tabContents.forEach(content => content.classList.remove('active'));
 
-  // Activar la pestaÃƒÂ±a y contenido correspondiente
+  // Activar la pestaña y contenido correspondiente
   tabs[index].classList.add('active');
   tabContents[index].classList.add('active');
 };
 function showTabVenta(index) {
-  // Obtener todas las pestaÃƒÂ±as y el contenido
+  // Obtener todas las pestañas y el contenido
   const tabs = document.querySelectorAll('.tabss');
   const tabContents = document.querySelectorAll('.tab-metodo-pago-content   ');
 
-  // Eliminar la clase activa de todas las pestaÃƒÂ±as y contenido
+  // Eliminar la clase activa de todas las pestañas y contenido
   tabs.forEach(tab => tab.classList.remove('active'));
   tabContents.forEach(content => content.classList.remove('active'));
 
-  // Activar la pestaÃƒÂ±a y contenido correspondiente
+  // Activar la pestaña y contenido correspondiente
   tabs[index].classList.add('active');
   tabContents[index].classList.add('active');
 };
 
 function showNewCajero(code){
-  // FunciÃƒÂ³n para alternar la visibilidad del div
+  // Función para alternar la visibilidad del div
   const butonSettings = document.getElementById('toggleButton');
   const tablaSettings = document.getElementById('id-tablaNewCajero');
   const btnGuardarSettings = document.getElementById('guardarButton');
@@ -528,7 +528,7 @@ function getDeviceInfo() {
   else if (isMobile) os = "Android";
 
   let deviceType = "PC o Laptop";
-  if (isMobile) deviceType = "MÃƒÂ³vil";
+  if (isMobile) deviceType = "Móvil";
   else if (isTablet) deviceType = "Tablet";
 
   let browser = "Desconocido";
@@ -801,12 +801,7 @@ function resolveApiBaseForHeader() {
   if (typeof API_URL === 'string' && API_URL) {
     return API_URL.endsWith('/') ? API_URL : `${API_URL}/`;
   }
-  const override = localStorage.getItem('api_url');
-  if (override) return override.endsWith('/') ? override : `${override}/`;
-  if (window.location.port === '3002') return `${window.location.origin}/`;
-  const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-  const protocol = isLocalHost ? 'http:' : window.location.protocol;
-  return `${protocol}//${window.location.hostname}:3002/`;
+  return window.MinimarketApi.resolveApiBase();
 }
 
 async function syncHeaderLogoFromServer() {
@@ -859,7 +854,7 @@ async function syncHeaderLogoFromServer() {
 
   
   // =========================
-  //  FunciÃƒÂ³n: mostrar secciÃƒÂ³n
+  //  Función: mostrar sección
   // =========================
 async function showSection(sectionId) {
   const nextSectionId = String(sectionId || '').trim();
@@ -955,7 +950,7 @@ document.querySelectorAll('.panel .tab').forEach(tab => {
         tab.addEventListener('click', () => {
             const target = tab.dataset.tab;
 
-            // activar pestaÃƒÂ±a
+            // activar pestaña
             document.querySelectorAll('.panel .tab').forEach(t => t.classList.toggle('active', t === tab));
             // mostrar / ocultar contenido
             document.querySelectorAll('.panel .tab-content').forEach(c =>
@@ -963,7 +958,7 @@ document.querySelectorAll('.panel .tab').forEach(tab => {
             );
         });
     });
-/* Mostrar la informaciÃƒÂ³n en la consola
+/* Mostrar la información en la consola
 */
 
 

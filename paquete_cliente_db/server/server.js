@@ -430,7 +430,7 @@ function isIsoDate(value) {
 function normalizeInventoryMovementType(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'ajuste') return 'ajuste';
-  if (raw === 'modificacion' || raw === 'modificaciÃƒÂ³n') return 'modificacion';
+  if (raw === 'modificacion' || raw === 'modificación') return 'modificacion';
   return null;
 }
 
@@ -4450,7 +4450,7 @@ app.post('/api/cajeros', async (req, res) => {
   const permisos = buildCashierPermissions(req.body?.permisos || {});
 
   if (!username || !nombre || !plainPassword || plainPassword.length < 4) {
-    return res.status(400).json({ error: 'Datos de cajero invÃƒÂ¡lidos' });
+    return res.status(400).json({ error: 'Datos de cajero inválidos' });
   }
 
   let connection;
@@ -4503,7 +4503,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
   const permisos = buildCashierPermissions(req.body?.permisos || {});
 
   if (!userId || !username || !nombre) {
-    return res.status(400).json({ error: 'Datos de cajero invÃƒÂ¡lidos' });
+    return res.status(400).json({ error: 'Datos de cajero inválidos' });
   }
 
   let connection;
@@ -4525,7 +4525,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
 
     if (plainPassword && plainPassword.length < 4) {
       await connection.rollback();
-      return res.status(400).json({ error: 'La contraseÃƒÂ±a debe tener al menos 4 caracteres' });
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 4 caracteres' });
     }
 
     if (plainPassword) {
@@ -4570,7 +4570,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
 app.delete('/api/cajeros/:id', async (req, res) => {
   const userId = toInt(req.params?.id);
   if (!userId) {
-    return res.status(400).json({ error: 'ID de cajero invÃƒÂ¡lido' });
+    return res.status(400).json({ error: 'ID de cajero inválido' });
   }
 
   let connection;
@@ -6005,7 +6005,7 @@ app.post('/api/purchase-order/close', async (req, res) => {
     );
     if (missingRows.length && !forceClose) {
       return res.status(409).json({
-        message: 'AÃƒÂºn faltan productos por ingresar en este pedido.',
+        message: 'Aún faltan productos por ingresar en este pedido.',
         missing_items: missingRows,
       });
     }
@@ -6076,7 +6076,7 @@ app.get('/api/purchase-orders/summary', async (req, res) => {
 app.get('/api/purchase-order/:id/detail', async (req, res) => {
   const orderId = toInt(req.params?.id);
   if (!orderId) {
-    return res.status(400).json({ message: 'Orden invÃƒÂ¡lida' });
+    return res.status(400).json({ message: 'Orden inválida' });
   }
   try {
     const [orderRows] = await db.query(
@@ -6207,7 +6207,7 @@ app.post('/api/purchase-order/items', async (req, res) => {
 app.delete('/api/purchase-order/items/:itemId', async (req, res) => {
   const itemId = toInt(req.params?.itemId);
   if (!itemId) {
-    return res.status(400).json({ message: 'Item invÃƒÂ¡lido para eliminar' });
+    return res.status(400).json({ message: 'Item inválido para eliminar' });
   }
 
   try {
@@ -6360,13 +6360,13 @@ app.post('/api/purchase-order/assign-email', async (req, res) => {
             <div style="font-size:12px; opacity:.95;">Solicitada por: ${String(requesterName || 'Usuario del sistema').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
           </div>
           <div style="padding:14px 18px; color:#0f172a; font-size:13px;">
-            ${note ? `<div style="margin-bottom:10px;"><strong>ObservaciÃƒÂ³n:</strong> ${String(note).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
+            ${note ? `<div style="margin-bottom:10px;"><strong>Observación:</strong> ${String(note).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
             <table role="presentation" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0;">
               <thead>
                 <tr style="background:#e2e8f0;">
                   <th style="padding:10px 8px; font-size:12px; text-align:left; color:#0f172a;">#</th>
                   <th style="padding:10px 8px; font-size:12px; text-align:left; color:#0f172a;">Producto</th>
-                  <th style="padding:10px 8px; font-size:12px; text-align:left; color:#0f172a;">CÃƒÂ³digo</th>
+                  <th style="padding:10px 8px; font-size:12px; text-align:left; color:#0f172a;">Código</th>
                   <th style="padding:10px 8px; font-size:12px; text-align:right; color:#0f172a;">Solicitado</th>
                   <th style="padding:10px 8px; font-size:12px; text-align:right; color:#0f172a;">Recibido</th>
                   <th style="padding:10px 8px; font-size:12px; text-align:right; color:#0f172a;">Pendiente</th>
@@ -10906,7 +10906,7 @@ app.post('/api/cash-movements', async (req, res) => {
   const allowedMethods = new Set(['efectivo', 'tarjeta', 'dolares', 'transferencia', 'cheque', 'vale', 'otro']);
 
   if (!cajaId || !cajeroId || !allowedTypes.has(tipoRaw) || monto === null || monto <= 0) {
-    return res.status(400).json({ message: 'Datos invÃƒÂ¡lidos para movimiento de caja' });
+    return res.status(400).json({ message: 'Datos inválidos para movimiento de caja' });
   }
   const metodo = allowedMethods.has(metodoRaw) ? metodoRaw : 'efectivo';
 
@@ -12272,7 +12272,7 @@ app.post('/api/auth/verify-admin', async (req, res) => {
   const sectionId = rawSectionId ? rawSectionId.toLowerCase() : '';
 
   if (!usernameInput || !passwordInput) {
-    return res.status(400).json({ message: 'Debes ingresar usuario y contraseÃ±a.' });
+    return res.status(400).json({ message: 'Debes ingresar usuario y contraseña.' });
   }
 
   const sectionPermissionMap = {
@@ -12290,7 +12290,7 @@ app.post('/api/auth/verify-admin', async (req, res) => {
 
   for (const field of requiredPermissions) {
     if (!CASHIER_PERMISSION_FIELDS.includes(field)) {
-      return res.status(400).json({ message: 'SecciÃ³n invÃ¡lida para autorizaciÃ³n.' });
+      return res.status(400).json({ message: 'Sección inválida para autorización.' });
     }
   }
 
@@ -12310,7 +12310,7 @@ app.post('/api/auth/verify-admin', async (req, res) => {
       );
       rows = permissionRows;
     } catch (permissionQueryError) {
-      // Fallback defensivo: permite validar admin aunque la tabla/permisos estÃ© desfasada.
+      // Fallback defensivo: permite validar admin aunque la tabla/permisos esté desfasada.
       usedPermissionFallback = true;
       console.error('Fallback en verify-admin (consulta permisos):', permissionQueryError?.message || permissionQueryError);
       const [basicRows] = await db.query(
@@ -12325,7 +12325,7 @@ app.post('/api/auth/verify-admin', async (req, res) => {
     }
 
     if (!rows.length) {
-      return res.status(401).json({ message: 'Credenciales de administrador invÃ¡lidas.' });
+      return res.status(401).json({ message: 'Credenciales de administrador inválidas.' });
     }
 
     const user = rows[0];
@@ -12341,7 +12341,7 @@ app.post('/api/auth/verify-admin', async (req, res) => {
     }
 
     if (!passwordOk) {
-      return res.status(401).json({ message: 'Credenciales de administrador invÃ¡lidas.' });
+      return res.status(401).json({ message: 'Credenciales de administrador inválidas.' });
     }
 
     const isAdmin = Number(user.es_administrador || 0) === 1;
@@ -12352,10 +12352,10 @@ app.post('/api/auth/verify-admin', async (req, res) => {
       if (requiredPermissions.length) {
         if (usedPermissionFallback) {
           return res.status(403).json({
-            message: 'No fue posible validar permisos por secciÃ³n. Usa una cuenta administrador para autorizar.',
+            message: 'No fue posible validar permisos por sección. Usa una cuenta administrador para autorizar.',
           });
         }
-        return res.status(403).json({ message: 'El usuario no tiene permisos para autorizar esta secciÃ³n.' });
+        return res.status(403).json({ message: 'El usuario no tiene permisos para autorizar esta sección.' });
       }
       return res.status(403).json({ message: 'El usuario ingresado no tiene perfil administrador.' });
     }
@@ -12783,8 +12783,8 @@ app.post('/api/sales', async (req, res) => {
     return res.status(400).json({ error: 'Producto comun invalido' });
   }
 
-  // Unificamos lÃ­neas del mismo producto para que promociones por cantidad
-  // (ej. 2x1) se apliquen aunque el frontend envÃ­e duplicados separados.
+  // Unificamos líneas del mismo producto para que promociones por cantidad
+  // (ej. 2x1) se apliquen aunque el frontend envíe duplicados separados.
   const mergedItems = [];
   const mergeIndexByProductId = new Map();
   items.forEach((item) => {

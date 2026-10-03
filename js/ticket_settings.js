@@ -1,15 +1,4 @@
-const API_URL = (() => {
-    const override = window.localStorage.getItem('api_url');
-    if (override) {
-        return override.endsWith('/') ? override : `${override}/`;
-    }
-    if (window.location.port === '3002') {
-        return `${window.location.origin}/`;
-    }
-    const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    const protocol = isLocalHost ? 'http:' : window.location.protocol;
-    return `${protocol}//${window.location.hostname}:3002/`;
-})();
+const API_URL = window.MinimarketApi.resolveApiBase();
 
 const LOCAL_PRINT_BRIDGE_BASES = ['http://127.0.0.1:7357/', 'http://localhost:7357/'];
 let localPrintBridgeCache = { base: null, checkedAt: 0 };

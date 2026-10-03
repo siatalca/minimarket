@@ -1,10 +1,4 @@
-const BACKUP_API_URL = (() => {
-    const override = window.localStorage.getItem('api_url');
-    if (override) return override.endsWith('/') ? override : `${override}/`;
-    if (window.location.port === '3002') return `${window.location.origin}/`;
-    const local = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    return `${local ? 'http:' : window.location.protocol}//${window.location.hostname}:3002/`;
-})();
+const BACKUP_API_URL = window.MinimarketApi.resolveApiBase();
 
 function backupHeaders(json = false) {
     const token = sessionStorage.getItem('token') || localStorage.getItem('token');

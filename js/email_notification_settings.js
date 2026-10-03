@@ -1,11 +1,4 @@
-const MAIL_API_URL = (() => {
-    const override = window.localStorage.getItem('api_url');
-    if (override) return override.endsWith('/') ? override : `${override}/`;
-    if (window.location.port === '3002') return `${window.location.origin}/`;
-    const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    const protocol = isLocalHost ? 'http:' : window.location.protocol;
-    return `${protocol}//${window.location.hostname}:3002/`;
-})();
+const MAIL_API_URL = window.MinimarketApi.resolveApiBase();
 
 const MAIL_PROVIDER_PRESETS = {
     gmail: {

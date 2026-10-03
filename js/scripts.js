@@ -1,24 +1,4 @@
-const API_URL = (() => {
-    const overrideRaw = String(window.localStorage.getItem('api_url') || '').trim();
-    if (overrideRaw) {
-        try {
-            const parsed = new URL(overrideRaw, window.location.origin);
-            const overrideHost = String(parsed.hostname || '').toLowerCase();
-            const currentHost = String(window.location.hostname || '').toLowerCase();
-            const isOverrideLocalhost = ['localhost', '127.0.0.1', '::1'].includes(overrideHost);
-            const isCurrentLocalhost = ['localhost', '127.0.0.1', '::1'].includes(currentHost);
-            if (!(isOverrideLocalhost && !isCurrentLocalhost)) {
-                return parsed.href.endsWith('/') ? parsed.href : `${parsed.href}/`;
-            }
-        } catch (_) {}
-    }
-    if (window.location.port === '3002') {
-        return `${window.location.origin}/`;
-    }
-    const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-    const protocol = isLocalHost ? 'http:' : window.location.protocol;
-    return `${protocol}//${window.location.hostname}:3002/`;
-})();
+const API_URL = window.MinimarketApi.resolveApiBase();
 const FRONTEND_BUILD_VERSION = '20260328c';
 try {
     window.__MINIMARKET_BUILD = FRONTEND_BUILD_VERSION;
@@ -9349,10 +9329,9 @@ async function saveCashMovement(tipoMovimiento) {
             provider_name: isExit ? descripcion : null,
         };
         const endpoints = [API_URL + 'api/cash-movements'];
-        const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
-        const fallbackBase = `${isLocalHost ? 'http:' : window.location.protocol}//${window.location.hostname}:3002/`;
-        const fallbackEndpoint = fallbackBase + 'api/cash-movements';
-        if (!endpoints.includes(fallbackEndpoint)) {
+        const fallbackBase = window.MinimarketApi.resolveLocalApiFallback();
+        const fallbackEndpoint = fallbackBase ? fallbackBase + 'api/cash-movements' : null;
+        if (fallbackEndpoint && !endpoints.includes(fallbackEndpoint)) {
             endpoints.push(fallbackEndpoint);
         }
 
@@ -9587,7 +9566,7 @@ function showReceipt(receipt) {
     document.getElementById('receipt').classList.remove('hidden');
 }
 
-// FunciÃ³n para mostrar la secciÃ³n activa
+// Función para mostrar la sección activa
 function showSectioninventario(sectionId) {
     const sections = document.querySelectorAll('div > section');
     sections.forEach(section => section.classList.add('hidden'));
@@ -9597,13 +9576,13 @@ function showSectioninventario(sectionId) {
     }
 }
 
-// FunciÃ³n para ocultar la secciÃ³n activa
+// Función para ocultar la sección activa
 function hideAllSections() {
     const sections = document.querySelectorAll('div > section');
     sections.forEach(section => section.classList.add('hidden'));
 }
 
-// FunciÃ³n para obtener los productos desde el backend
+// Función para obtener los productos desde el backend
 async function getProducts() {
     try {
         const response = await fetch(API_URL+'api/productos', {
@@ -10449,7 +10428,7 @@ async function loadProductSupplierOptions() {
     }
 }
 
-// FunciÃ³n para modificar un producto
+// Función para modificar un producto
 async function modifyProduct() {
     const code = prompt("Enter the product barcode to modify:");
     const name = prompt("Enter new name:");
@@ -10476,7 +10455,7 @@ async function modifyProduct() {
     }
 }
 
-// FunciÃ³n para buscar productos
+// Función para buscar productos
 async function searchProduct() {
     const searchQuery = document.getElementById('search-product').value;
     if (searchQuery) {
@@ -10494,7 +10473,7 @@ async function searchProduct() {
     }
 }
 
-/* Llamar a getProducts cuando la secciÃ³n de inventario se muestra
+/* Llamar a getProducts cuando la sección de inventario se muestra
 document.getElementById('inventory').addEventListener('show', () => {
     getProducts();
 });*/
@@ -12457,11 +12436,11 @@ async function getConnectedDevices() {
     }
 }*/
 
-// Llamar a la funciÃ³n cada 5 segundos para actualizar el nÃºmero de equipos conectados
+// Llamar a la función cada 5 segundos para actualizar el número de equipos conectados
 //setInterval(getConnectedDevices, 5000);
 
 
-// Llamar una vez al cargar la pÃ¡gina
+// Llamar una vez al cargar la página
 //document.addEventListener('DOMContentLoaded', getConnectedDevices);
 
 /*document.getElementById("info").textContent =
@@ -12643,7 +12622,7 @@ async function login(){
             }
             return;
           }
-          // Guardar token o sesiÃ³n
+          // Guardar token o sesión
           setSessionTokens(data.token, data.refresh_token || null);
           localStorage.setItem('user', username);// Opcional: guardar el nombre de usuario
           localStorage.setItem('id_user', data.id);
@@ -16155,7 +16134,7 @@ async function warmupProductFormsData() {
     applyDefaultProfitToProductForms();
 }
 
-/* Mostrar la informaciÃ³n en la consola*/
+/* Mostrar la información en la consola*/
 
 document.addEventListener('DOMContentLoaded', () => {
     if (isLoginBootstrapPage()) {

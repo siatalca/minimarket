@@ -26,6 +26,7 @@
         <button id="backup-run" class="backup-run" type="button">Respaldar ahora</button>
     </div>
 </section></div></div>
-<script src="../js/automatic_backup_settings.js?v=20260814a"></script>
+<script src="../js/api_base.js?v=20261003a"></script>
+<script src="../js/automatic_backup_settings.js?v=20261003a"></script>
 </body>
 </html>

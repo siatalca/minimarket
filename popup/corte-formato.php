@@ -277,6 +277,7 @@
         </section>
     </div>
 
-    <script src="../js/cut_print_settings.js?v=20260325c"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/cut_print_settings.js?v=20261003a"></script>
 </body>
 </html>

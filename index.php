@@ -6,13 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Login - Minimarket</title>
 
-    <!-- AsegÃƒÆ’Ã‚Âºrate de que root.css vaya primero -->
+    <!-- Asegúrate de que root.css vaya primero -->
     <link rel="stylesheet" href="./css/root.css">
     <link rel="stylesheet" href="./css/styleslogin.css" />
 </head>
 
 <body>
-    <!-- BotÃƒÆ’Ã‚Â³n modo oscuro -->
+    <!-- Botón modo oscuro -->
     <div id="load" class="login-container hidden">
         hola
     </div>
@@ -77,7 +77,7 @@
                             <td class="td-ext">
                                 <p style="margin-left:50px;">
                                     Si usas Inventario, tus productos tendran cantidades limitadas
-                                    en venta y podrÃƒÆ’Ã‚Â¡s llevar un control de cuanto tienes, cuando
+                                    en venta y podrás llevar un control de cuanto tienes, cuando
                                     y cuanto se vende.
                                 </p>
                                 <p style="margin-left:50px;">Si actualmente no usas inventario, puedes no usarlo
@@ -89,7 +89,7 @@
                             <td class="td-ext" style="padding-top: 15px;">
                                 <label>
                                     <input id="credito" class="checkbox" type="checkbox" name="utiliza_inv">
-                                    <b>Deseo ofrecer crÃƒÆ’Ã‚Â©dito a mis clientes.</b>
+                                    <b>Deseo ofrecer crédito a mis clientes.</b>
                                 </label>
                             </td>
                         </tr>
@@ -106,15 +106,15 @@
                             <td class="td-ext" style="padding-top: 15px;">
                                 <label>
                                     <input id="producto_comun" class="checkbox" type="checkbox" name="utiliza_inv">
-                                    <b>Habilitar venta de producto comÃƒÆ’Ã‚Âºn.</b>
+                                    <b>Habilitar venta de producto común.</b>
                                 </label>
                             </td>
                         </tr>
                         <tr>
                             <td class="td-ext">
                                 <p style="margin-left:50px;">
-                                    desea activar la opciÃƒÆ’Ã‚Â³n de venta de "Producto ComÃƒÆ’Ã‚Âºn", con
-                                    la cual puedes vender articulos que NO entÃƒÆ’Ã‚Â¡n en la base de
+                                    desea activar la opción de venta de "Producto Común", con
+                                    la cual puedes vender articulos que NO están en la base de
                                     datos al momento de hacer una venta, por ejemplo: chicles,
                                     dulces, articulos esporadicos, etc.
                                 </p>
@@ -192,7 +192,7 @@
                         </tr>
                         <tr>
                             <td class="td-ext">
-                                <button class="btn" style="width: 250px; margin-top: 20px; font-size:16px;"><b>Guardar configuraciÃƒÆ’Ã‚Â³n</b></button>
+                                <button class="btn" style="width: 250px; margin-top: 20px; font-size:16px;"><b>Guardar configuración</b></button>
                             </td>
                         </tr>
                     </table>
@@ -216,7 +216,7 @@
                 <option id="caja_6" value="6">6</option>
                 <option id="caja_7" value="7">7</option>
                 <option id="caja_8" value="8">8</option>
-                <option id="caja_none" class="hidden" value="8">no quedan cajas disponible contacta al proveedor para solicitar mÃƒÆ’Ã‚Â¡s.</option>
+                <option id="caja_none" class="hidden" value="8">no quedan cajas disponible contacta al proveedor para solicitar más.</option>
             </select>
             <label>Nombre (opcional)</label>
             <input id="nombre_caja" type="text" value="Caja 1">
@@ -246,8 +246,9 @@
     <!--fin login-->
 
     <script src="./js/login.js?v=20260327a"></script>
+    <script src="./js/api_base.js?v=20261003a"></script>
     <script src="./js/product_name_display.js?v=20260923a"></script>
-    <script src="./js/scripts.js?v=20260923a"></script>
+    <script src="./js/scripts.js?v=20261003a"></script>
 
 </body>
 

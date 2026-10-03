@@ -349,7 +349,8 @@
         </section>
     </div>
 
-    <script src="../js/dte_client.js?v=20260222e"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/dte_client.js?v=20261003a"></script>
     <script src="../js/dte_setup.js?v=20260222e"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-﻿<!-- ============  VENTA - TicketÂ 1  ============ -->
+﻿<!-- ============  VENTA - Ticket 1  ============ -->
 
 <div class="panel"><!-- hereda caja blanca con sombra -->
     <div class="sales-session-strip">

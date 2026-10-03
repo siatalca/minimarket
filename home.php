@@ -37,7 +37,7 @@
             <iframe id="embedded-popup-frame" title="Popup embebido" style="width:100%; height:100%; border:0; background:#fff;"></iframe>
         </div>
     </div>
-    <p id="logout-msg" style="display:none;">Cerrando sesiÃ³nâ€¦</p>
+    <p id="logout-msg" style="display:none;">Cerrando sesión…</p>
 </main>
 
 <?php require('./layout/footer.php'); ?>

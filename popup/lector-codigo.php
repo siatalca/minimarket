@@ -191,6 +191,7 @@
         </div>
     </div>
 
-    <script src="../js/scanner_settings.js?v=20260222p"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/scanner_settings.js?v=20261003a"></script>
 </body>
 </html>

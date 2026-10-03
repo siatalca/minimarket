@@ -95,6 +95,7 @@
         </div>
     </div>
 
-    <script src="../js/cash_drawer_settings.js?v=20260222o"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/cash_drawer_settings.js?v=20261003a"></script>
 </body>
 </html>

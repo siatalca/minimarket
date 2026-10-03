@@ -67,7 +67,8 @@
         </section>
     </div>
 
-    <script src="../js/logo_settings.js?v=20260320a"></script>
+    <script src="../js/api_base.js?v=20261003a"></script>
+    <script src="../js/logo_settings.js?v=20261003a"></script>
     
 </body>
 
