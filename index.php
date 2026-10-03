@@ -217,7 +217,6 @@
                 <option id="caja_5" value="5">5</option>
                 <option id="caja_6" value="6">6</option>
                 <option id="caja_7" value="7">7</option>
-                <option id="caja_8" value="8">8</option>
                 <option id="caja_none" class="hidden" value="8">no quedan cajas disponible contacta al proveedor para solicitar más.</option>
             </select>
             <label>Nombre (opcional)</label>

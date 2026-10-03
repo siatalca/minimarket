@@ -317,7 +317,13 @@
     <script>
         const API_URL = window.MinimarketApi.resolveApiBase();
 
-        const slots = Array.from({ length: 8 }, (_, i) => i + 1);
+        // La caja 8 esta reservada para admin_sia: el resto de usuarios solo ve las cajas 1 a 7.
+        const ADMIN_SIA_BOX_NUMBER = 8;
+        let isAdminSiaSession = false;
+        function getSlots() {
+            return Array.from({ length: 8 }, (_, i) => i + 1)
+                .filter((n) => isAdminSiaSession || n !== ADMIN_SIA_BOX_NUMBER);
+        }
         let boxesByNumber = new Map();
         let branchesById = new Map();
         let selectedBoxNumber = null;
@@ -454,7 +460,7 @@
             const inactive = Array.from(boxesByNumber.values()).filter((box) => box.estado !== 1).length;
             const summary = document.getElementById('box-admin-summary');
             if (summary) {
-                summary.textContent = `Cajas habilitadas: ${enabled} de 8 equipos permitidos. Inactivas: ${inactive}.`;
+                summary.textContent = `Cajas habilitadas: ${enabled}. Inactivas: ${inactive}.`;
             }
         }
 
@@ -508,7 +514,7 @@
         function buildBoxNumberOptions() {
             const select = document.getElementById('box-number');
             if (!select) return;
-            select.innerHTML = slots.map((n) => `<option value="${n}">Caja ${n}</option>`).join('');
+            select.innerHTML = getSlots().map((n) => `<option value="${n}">Caja ${n}</option>`).join('');
             if (selectedBoxNumber) {
                 select.value = String(selectedBoxNumber);
             }
@@ -636,7 +642,7 @@
             try {
                 await fetch(API_URL + 'api/device-caja/bind', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({
                         fingerprint,
                         numero_caja: Number(boxNumber),
@@ -775,8 +781,12 @@
                     input.max = String(data.max_permitido || 8);
                     input.value = String(data.max_cajas_activas || 4);
                 }
-                setBoxLimitInfo(`Activas ahora: ${data.cajas_activas} de ${data.max_cajas_activas}.`);
+                setBoxLimitInfo(`Activas ahora: ${data.cajas_activas} de ${data.max_cajas_activas} (sin contar la Caja ${ADMIN_SIA_BOX_NUMBER} de SIA).`);
                 card.classList.remove('hidden');
+                if (!isAdminSiaSession) {
+                    isAdminSiaSession = true;
+                    buildBoxNumberOptions();
+                }
             } catch (_) {
                 card.classList.add('hidden');
             }

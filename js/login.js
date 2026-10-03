@@ -131,10 +131,12 @@ async function resolveCajaFromDeviceBinding(fingerprint) {
 
 async function bindCajaToDeviceFingerprint(fingerprint, numeroCaja, nombreCaja) {
   if (!fingerprint || !/^\d+$/.test(String(numeroCaja || ''))) return;
+  // Con sesion iniciada se envia el token (la caja reservada de admin_sia lo exige).
+  const token = String(sessionStorage.getItem('token') || localStorage.getItem('token') || '').trim();
   try {
     await fetch(API_URL + 'api/device-caja/bind', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: token ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } : { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         fingerprint,
         numero_caja: Number(numeroCaja),

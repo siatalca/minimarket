@@ -396,6 +396,12 @@ const MAX_ACTIVE_BRANCHES_DEFAULT = 3;
 // Cajas activas permitidas por defecto; solo admin_sia puede cambiarlo (system_business_limits).
 const MAX_ACTIVE_BOXES_DEFAULT = 4;
 const MAX_BOX_NUMBER = 8;
+// Caja de uso exclusivo de admin_sia: oculta para los demas y fuera del limite de cajas activas.
+const ADMIN_SIA_BOX_NUMBER = 8;
+
+function isAdminSiaBox(cajaId) {
+  return Number(cajaId) === ADMIN_SIA_BOX_NUMBER;
+}
 const BRANCH_CREATOR_CONTACT_DEFAULT = 'SIA';
 
 function normalizeBranchCode(rawValue) {
@@ -4517,7 +4523,19 @@ app.use(async (req, res, next) => {
   if (!req.path.startsWith('/api/')) {
     return next();
   }
-  if (req.method === 'OPTIONS' || isPublicRoute(req)) {
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+  if (isPublicRoute(req)) {
+    // Rutas publicas: si viene un token valido se identifica al usuario (p. ej. admin_sia).
+    const optionalToken = getBearerToken(req);
+    if (optionalToken) {
+      try {
+        req.user = jwt.verify(optionalToken, config.jwtSecret);
+      } catch (_) {
+        req.user = undefined;
+      }
+    }
     return next();
   }
 
@@ -4700,10 +4718,11 @@ async function getMaxActiveBoxes(executor = db) {
 // Devuelve un mensaje si activar `cajaId` supera el limite; null si se permite.
 // El limite exacto solo se muestra a admin_sia.
 async function checkBoxActivationLimit(executor, cajaId, userId) {
+  if (isAdminSiaBox(cajaId)) return null;
   const maxActive = await getMaxActiveBoxes(executor);
   const [countRows] = await executor.query(
-    'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ?',
-    [cajaId]
+    'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ? AND n_caja <> ?',
+    [cajaId, ADMIN_SIA_BOX_NUMBER]
   );
   const activeOthers = Number(countRows[0]?.total || 0);
   if (activeOthers < maxActive) return null;
@@ -4740,7 +4759,10 @@ app.get('/api/cajas-limit', async (req, res) => {
   if (!(await requireAdminSia(req, res))) return;
   try {
     const maxActive = await getMaxActiveBoxes();
-    const [countRows] = await db.query('SELECT COUNT(*) AS total FROM cajas WHERE estado = 1');
+    const [countRows] = await db.query(
+      'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ?',
+      [ADMIN_SIA_BOX_NUMBER]
+    );
     return res.json({
       max_cajas_activas: maxActive,
       cajas_activas: Number(countRows[0]?.total || 0),
@@ -4845,8 +4867,11 @@ app.get('/api/getCajas', async (req, res) => {
        LEFT JOIN sucursales s ON s.id_sucursal = c.sucursal_id
        ORDER BY c.n_caja ASC`
     );
-    if (results.length > 0) {
-      res.json(results);
+    const visible = (await isAdminSiaUser(req.user?.sub))
+      ? results
+      : results.filter((row) => !isAdminSiaBox(row.n_caja));
+    if (visible.length > 0) {
+      res.json(visible);
     } else {
       res.json(0);
     }
@@ -5187,6 +5212,9 @@ app.post('/api/device-caja/bind', async (req, res) => {
 
   if (!deviceHash || !isValidCajaNumber(cajaId)) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(409).json({ message: 'Numero de caja no disponible' });
   }
 
   try {
@@ -13884,6 +13912,10 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: 'Credenciales invalidas' });
     }
 
+    if (isAdminSiaBox(cajaId) && !isAdminSiaUsername(user.user)) {
+      return res.status(400).json({ message: `Caja ${cajaId} no registrada.` });
+    }
+
     if (cajaId) {
       const [boxRows] = await db.query(
         `SELECT c.estado, s.activa AS sucursal_activa
@@ -14746,6 +14778,9 @@ app.post('/api/addCaja', async (req, res) => {
   if (!isValidCajaNumber(cajaId) || !cajaName || boxState === null) {
     return res.status(400).json({ error: 'Datos incompletos o invalidos' });
   }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(409).json({ error: 'Numero de caja no disponible' });
+  }
 
   try {
     const branchId = requestedBranchId || 1;
@@ -14796,6 +14831,9 @@ app.post('/api/cajas/upsert', async (req, res) => {
 
   if (!isValidCajaNumber(cajaId) || !cajaName || boxState === null) {
     return res.status(400).json({ error: 'Datos de caja incompletos o invalidos' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(409).json({ error: 'Numero de caja no disponible' });
   }
 
   let connection;
@@ -14899,6 +14937,9 @@ app.delete('/api/cajas/:numero', async (req, res) => {
   const cajaId = toInt(req.params?.numero);
   if (!isValidCajaNumber(cajaId)) {
     return res.status(400).json({ error: 'Numero de caja invalido' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(404).json({ error: 'Caja no encontrada' });
   }
 
   let connection;
