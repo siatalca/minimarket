@@ -320,9 +320,23 @@ app.get('/health', (_req, res) => {
   return res.json({ ok: true, service: 'local_print_bridge', platform: process.platform });
 });
 
+const PRINTER_LIST_CACHE_MS = 60000;
+let printerListCache = { printers: null, at: 0 };
+
+async function listLocalPrintersCached() {
+  if (printerListCache.printers && (Date.now() - printerListCache.at) < PRINTER_LIST_CACHE_MS) {
+    return printerListCache.printers;
+  }
+  const printers = await listLocalPrinters();
+  printerListCache = { printers, at: Date.now() };
+  return printers;
+}
+
 app.get('/api/printers', async (_req, res) => {
   try {
+    // Configuracion > Impresora siempre pide la lista actual y de paso renueva la cache.
     const printers = await listLocalPrinters();
+    printerListCache = { printers, at: Date.now() };
     return res.json(printers);
   } catch (err) {
     return res.status(500).json({ message: `No se pudieron listar impresoras locales: ${err.message}` });
@@ -335,12 +349,7 @@ app.post('/api/print/ticket', async (req, res) => {
   const printEngine = normalizePrintEngine(req.body?.print_engine);
   const fontSize = clampNumber(req.body?.font_size, 4.5, 12, 6.5);
   const feedLines = clampNumber(req.body?.feed_lines_after_print, 0, 8, 0);
-  const availablePrinters = await listLocalPrinters().catch(() => []);
-  const printerCandidates = buildPrinterCandidates(requestedPrinterName, availablePrinters);
 
-  if (!printerCandidates.length) {
-    return res.status(400).json({ message: 'No hay impresoras locales disponibles en este equipo' });
-  }
   if (!text.trim()) {
     return res.status(400).json({ message: 'Debe indicar el texto del ticket' });
   }
@@ -354,21 +363,42 @@ app.post('/api/print/ticket', async (req, res) => {
     let usedMode = printEngine;
     let usedSource = '';
     let lastError = null;
+    const triedNames = new Set();
 
-    for (const candidate of printerCandidates) {
-      try {
-        usedMode = await printTextFileToPrinter({
-          tempFile,
-          printerName: candidate.name,
-          printEngine,
-          fontSize,
-        });
-        usedPrinter = candidate.name;
-        usedSource = candidate.source;
-        break;
-      } catch (err) {
-        lastError = err;
+    const tryCandidates = async (candidates) => {
+      for (const candidate of candidates) {
+        const key = candidate.name.toLowerCase();
+        if (triedNames.has(key)) continue;
+        triedNames.add(key);
+        try {
+          usedMode = await printTextFileToPrinter({
+            tempFile,
+            printerName: candidate.name,
+            printEngine,
+            fontSize,
+          });
+          usedPrinter = candidate.name;
+          usedSource = candidate.source;
+          return true;
+        } catch (err) {
+          lastError = err;
+        }
       }
+      return false;
+    };
+
+    // Camino rapido: imprimir directo en la impresora configurada. Listar las impresoras
+    // de Windows cuesta ~2 s de PowerShell, asi que solo se hace si no hay nombre o si falla.
+    const printed = requestedPrinterName
+      ? await tryCandidates([{ name: requestedPrinterName, source: 'requested' }])
+      : false;
+    if (!printed) {
+      const availablePrinters = await listLocalPrintersCached().catch(() => []);
+      const fallbackCandidates = buildPrinterCandidates(requestedPrinterName, availablePrinters);
+      if (!fallbackCandidates.length && !lastError) {
+        return res.status(400).json({ message: 'No hay impresoras locales disponibles en este equipo' });
+      }
+      await tryCandidates(fallbackCandidates);
     }
 
     if (!usedPrinter) {

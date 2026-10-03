@@ -21,3 +21,4 @@ Thumbs.db
 .vscode/
 paquete_impresion/node_modules/
 paquete_impresion/logs/
+*.zip
