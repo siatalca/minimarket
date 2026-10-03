@@ -616,6 +616,22 @@ async function initTicketForm() {
     });
 
     const testPrintBtn = document.getElementById('print-ticket-test-btn');
+    let testPrintStatusTimer = null;
+    // Aviso breve junto al boton (sin alert) para que la prueba no interrumpa al imprimir directo.
+    function showTestPrintStatus(text) {
+        if (!testPrintBtn) return;
+        let status = document.getElementById('print-ticket-test-status');
+        if (!status) {
+            status = document.createElement('span');
+            status.id = 'print-ticket-test-status';
+            status.setAttribute('role', 'status');
+            status.style.cssText = 'margin-left:12px; font-weight:600; color:#16a34a;';
+            testPrintBtn.insertAdjacentElement('afterend', status);
+        }
+        status.textContent = text;
+        clearTimeout(testPrintStatusTimer);
+        testPrintStatusTimer = setTimeout(() => { status.textContent = ''; }, 4000);
+    }
     testPrintBtn?.addEventListener('click', async () => {
         if (!currentSettings) return;
         try {
@@ -656,7 +672,7 @@ async function initTicketForm() {
                     fontSizePt: data.font_size,
                     fontBoostPx: data.font_size_adjust_px ?? payload.font_size_adjust_px ?? 0,
                 });
-                alert('Prueba enviada por el navegador a la impresora predeterminada de Windows.');
+                showTestPrintStatus('Prueba enviada a la impresora predeterminada.');
                 return;
             }
 
@@ -673,7 +689,7 @@ async function initTicketForm() {
                     printEngine: data.print_engine || payload.print_engine || 'auto',
                     fontSize: data.font_size || 6.5,
                 });
-                alert(`Prueba enviada a impresora local: ${data.printer || payload.printer_name || 'predeterminada del equipo'}`);
+                showTestPrintStatus(`Prueba enviada a ${data.printer || payload.printer_name || 'la impresora del equipo'}.`);
                 return;
             }
             if (localBridge) {
@@ -684,7 +700,7 @@ async function initTicketForm() {
                     printEngine: data.print_engine || payload.print_engine || 'auto',
                     fontSize: data.font_size || 6.5,
                 });
-                alert(`Prueba enviada a impresora local: ${data.printer || payload.printer_name || 'predeterminada del equipo'}`);
+                showTestPrintStatus(`Prueba enviada a ${data.printer || payload.printer_name || 'la impresora del equipo'}.`);
                 return;
             }
 
@@ -693,7 +709,7 @@ async function initTicketForm() {
                 fontSizePt: data.font_size,
                 fontBoostPx: data.font_size_adjust_px ?? payload.font_size_adjust_px ?? 0,
             });
-            alert('Prueba enviada por navegador local.');
+            showTestPrintStatus('Prueba enviada por el navegador.');
         } catch (error) {
             alert(error.message || 'No se pudo imprimir la prueba');
         } finally {

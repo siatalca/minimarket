@@ -151,7 +151,7 @@
 
     <script src="../js/api_base.js?v=20261003a"></script>
     <script src="../js/ticket_print_method.js?v=20261003b"></script>
-    <script src="../js/ticket_settings.js?v=20261003b"></script>
+    <script src="../js/ticket_settings.js?v=20261003c"></script>
 </body>
 </html>
 
