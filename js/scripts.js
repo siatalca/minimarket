@@ -12445,6 +12445,7 @@ async function closeCurrentShift(declaredOverride = null, declaredCardOverride =
         } catch (logoutError) {
             console.error('Error during disconnect after shift close:', logoutError);
         }
+        window.MinimarketSessionReservation?.clearCompletedShiftLocalState(localStorage, sessionStorage);
         clearSessionTokens();
         localStorage.removeItem('id_user');
         localStorage.removeItem('user_permissions');

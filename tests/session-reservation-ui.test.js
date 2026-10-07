@@ -8,6 +8,7 @@ const {
   renderReservationOwner,
   clearLocalAuth,
   clearLocalAuthAndReservation,
+  clearCompletedShiftLocalState,
 } = require('../js/session_reservation');
 
 function memoryStorage(initial = {}) {
@@ -116,6 +117,36 @@ test('el acceso restringido descarta tokens ajenos sin perder la reserva', () =>
     [RESERVATION_STORAGE_KEY]: '{"ownerId":17,"reservationToken":"firmada"}',
     turno_id_actual: '88',
     n_caja: '2',
+  });
+  assert.deepEqual(session.snapshot(), {});
+});
+
+test('un corte completo elimina reserva, autenticación y datos locales del turno', () => {
+  const local = memoryStorage({
+    token: 'access',
+    refresh_token: 'refresh',
+    id_user: '1',
+    user: 'admin_sia',
+    username: 'Administrador SIA',
+    estado_login: '1',
+    user_permissions: '{}',
+    user_is_admin: '1',
+    [RESERVATION_STORAGE_KEY]: '{"ownerId":1,"ownerLogin":"admin_sia","reservationToken":"firmada"}',
+    turno_id_actual: '88',
+    turno_monto_inicial: '25000',
+    ticket_seed_shift_id: '88',
+    turno_owner_user: '1',
+    turno_owner_caja: '8',
+    n_caja: '8',
+    nombre_caja: 'Caja Administración',
+  });
+  const session = memoryStorage({ token: 'session-access', refresh_token: 'session-refresh' });
+
+  clearCompletedShiftLocalState(local, session);
+
+  assert.deepEqual(local.snapshot(), {
+    n_caja: '8',
+    nombre_caja: 'Caja Administración',
   });
   assert.deepEqual(session.snapshot(), {});
 });

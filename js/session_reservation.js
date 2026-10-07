@@ -22,6 +22,13 @@
     'password',
   ];
   const SESSION_AUTH_KEYS = ['token', 'refresh_token'];
+  const COMPLETED_SHIFT_KEYS = [
+    'turno_id_actual',
+    'turno_monto_inicial',
+    'ticket_seed_shift_id',
+    'turno_owner_user',
+    'turno_owner_caja',
+  ];
 
   function createReservationRecord(input = {}) {
     return {
@@ -88,6 +95,11 @@
     clearReservation(local);
   }
 
+  function clearCompletedShiftLocalState(local, session) {
+    clearLocalAuthAndReservation(local, session);
+    COMPLETED_SHIFT_KEYS.forEach((key) => local?.removeItem(key));
+  }
+
   return {
     RESERVATION_STORAGE_KEY,
     createReservationRecord,
@@ -99,5 +111,6 @@
     renderReservationOwner,
     clearLocalAuth,
     clearLocalAuthAndReservation,
+    clearCompletedShiftLocalState,
   };
 });
