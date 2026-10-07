@@ -225,8 +225,83 @@ function applyLoginBranding() {
   }
 }
 
+function getLocalSessionReservation() {
+  return window.MinimarketSessionReservation?.readReservation(localStorage) || null;
+}
+
+function applySessionReservationToLogin() {
+  const reservation = getLocalSessionReservation();
+  const ownerElement = document.getElementById('session-reservation-owner');
+  const usernameInput = document.getElementById('username');
+  if (!reservation) {
+    if (ownerElement) ownerElement.classList.add('hidden');
+    return null;
+  }
+  if (ownerElement) {
+    window.MinimarketSessionReservation.renderReservationOwner(ownerElement, reservation);
+    ownerElement.classList.remove('hidden');
+  }
+  if (usernameInput) usernameInput.value = reservation.ownerLogin;
+  return reservation;
+}
+
+function showRestrictedReservationView(serverOwner = null) {
+  const localReservation = getLocalSessionReservation();
+  const displayReservation = localReservation || {
+    ownerId: Number(serverOwner?.id || 0),
+    ownerLogin: String(serverOwner?.login || '').trim(),
+    ownerName: String(serverOwner?.name || '').trim(),
+    caja: String(serverOwner?.caja || '').trim(),
+  };
+  const form = document.getElementById('login-form');
+  const panel = document.getElementById('reserved-session-restricted');
+  const owner = document.getElementById('reserved-session-restricted-owner');
+  const password = document.getElementById('password');
+  const error = document.getElementById('login-error');
+  if (form) form.classList.add('hidden');
+  if (error) error.classList.add('hidden');
+  if (password) password.value = '';
+  if (owner) window.MinimarketSessionReservation.renderReservationOwner(owner, displayReservation);
+  if (panel) panel.classList.remove('hidden');
+}
+
+function restoreReservedLoginView() {
+  const form = document.getElementById('login-form');
+  const panel = document.getElementById('reserved-session-restricted');
+  const password = document.getElementById('password');
+  if (panel) panel.classList.add('hidden');
+  if (form) form.classList.remove('hidden');
+  applySessionReservationToLogin();
+  refreshShiftLockMessage();
+  if (password) {
+    password.value = '';
+    password.focus();
+  }
+}
+
+function bindRestrictedReservationActions() {
+  const releaseButton = document.getElementById('release-local-session');
+  const cancelButton = document.getElementById('cancel-local-session-release');
+  if (releaseButton) {
+    releaseButton.addEventListener('click', () => {
+      window.MinimarketSessionReservation.clearLocalAuthAndReservation(localStorage, sessionStorage);
+      const username = document.getElementById('username');
+      const password = document.getElementById('password');
+      const owner = document.getElementById('session-reservation-owner');
+      const message = document.getElementById('msj_activo');
+      if (username) username.value = '';
+      if (password) password.value = '';
+      if (owner) owner.classList.add('hidden');
+      if (message) message.classList.add('hidden');
+      restoreReservedLoginView();
+    });
+  }
+  if (cancelButton) cancelButton.addEventListener('click', restoreReservedLoginView);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   applyLoginBranding();
+  bindRestrictedReservationActions();
   const username = localStorage.getItem('user');
   const estadoLogin = localStorage.getItem('estado_login');
   const hadLocalBusiness = hasLocalBusinessInfo();
@@ -241,6 +316,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const inputName = document.getElementById('username');
       inputName.value = username;
     }
+  applySessionReservationToLogin();
   if (estadoLogin === '1') {
       document.getElementById('msj_activo').classList.remove('hidden');
     }
@@ -331,6 +407,13 @@ async function refreshShiftLockMessage() {
     msg.textContent = getInactiveCajaMessage(inactiveAssignedCaja);
     msg.classList.remove('hidden');
     setLoginFormEnabled(false);
+    return;
+  }
+  const reservation = getLocalSessionReservation();
+  if (reservation) {
+    msg.textContent = 'Ingresa la contraseña para continuar.';
+    msg.classList.remove('hidden');
+    setLoginFormEnabled(true);
     return;
   }
   const caja = String(localStorage.getItem('n_caja') || '').trim();

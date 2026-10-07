@@ -33,6 +33,7 @@ async function logoutToLogin({ preserveShift } = { preserveShift: true }) {
   localStorage.removeItem('password');
 
   if (!preserveShift) {
+    window.MinimarketSessionReservation?.clearReservation(localStorage);
     localStorage.removeItem('turno_id_actual');
     localStorage.removeItem('turno_monto_inicial');
     localStorage.removeItem('ticket_seed_shift_id');

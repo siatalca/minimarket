@@ -10,6 +10,13 @@ const { execFile, spawn } = require('child_process');
 const { config } = require('./config');
 const db = require('./db');
 const dteModule = require('./dte_module');
+const {
+  createReservationToken,
+  verifyReservationToken,
+  decideReservationAccess,
+  isVerifiedAdminSia,
+  buildRestrictedLoginResponse,
+} = require('./session_reservation_policy');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -12384,6 +12391,7 @@ app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
   const cajaId = toInt(req.body?.numero_caja);
   const deviceHash = toText(req.body?.device_hash, 64);
+  const reservationTokenInput = String(req.body?.reservation_token || '').trim().slice(0, 4096);
   const usernameInput = typeof username === 'string' ? username.trim() : '';
   const passwordInput = typeof password === 'string' ? password : '';
 
@@ -12424,6 +12432,21 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: 'Credenciales invalidas' });
     }
 
+    let reservation = null;
+    let reservationInvalid = false;
+    if (reservationTokenInput) {
+      try {
+        reservation = verifyReservationToken(reservationTokenInput, {
+          secret: config.jwtSecret,
+          expectedDeviceHash: deviceHash || undefined,
+          expectedCaja: cajaId || undefined,
+        });
+      } catch (_) {
+        reservationInvalid = true;
+      }
+    }
+
+    let openShiftOwner = null;
     if (cajaId) {
       const [boxRows] = await db.query(
         `SELECT c.estado, s.activa AS sucursal_activa
@@ -12447,7 +12470,7 @@ app.post('/api/login', async (req, res) => {
       }
 
       const [openShiftRows] = await db.query(
-        `SELECT c.usuario_id, u.nombre AS cajero_nombre
+        `SELECT c.usuario_id, u.nombre AS cajero_nombre, u.user AS cajero_user
          FROM corte_caja c
          LEFT JOIN usuarios u ON u.id = c.usuario_id
          WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.estado = 'abierto'
@@ -12456,16 +12479,48 @@ app.post('/api/login', async (req, res) => {
         [cajaId]
       );
       if (openShiftRows.length > 0) {
-        const ownerUserId = Number(openShiftRows[0].usuario_id || 0);
-        if (ownerUserId && ownerUserId !== Number(user.id)) {
-          return res.status(409).json({
-            message: `Hay un turno abierto en caja ${cajaId}. Solo puede ingresar ${openShiftRows[0].cajero_nombre || 'el cajero del turno abierto'} hasta realizar cierre.`,
-            code: 'TURNO_ABIERTO_OTRO_CAJERO',
-            caja_id: cajaId,
-            usuario_id: ownerUserId,
-          });
-        }
+        openShiftOwner = {
+          id: Number(openShiftRows[0].usuario_id || 0),
+          login: String(openShiftRows[0].cajero_user || '').trim(),
+          name: String(openShiftRows[0].cajero_nombre || '').trim(),
+        };
       }
+    }
+
+    const accessDecision = reservationInvalid
+      ? (isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny')
+      : decideReservationAccess({
+          reservation,
+          openShiftOwnerId: openShiftOwner?.id || 0,
+          user,
+        });
+    const reservedOwner = reservation
+      ? {
+          id: reservation.ownerId,
+          login: reservation.ownerLogin,
+          name: reservation.ownerName,
+          caja: reservation.caja,
+        }
+      : (openShiftOwner
+          ? { id: openShiftOwner.id, login: openShiftOwner.login, name: openShiftOwner.name, caja: cajaId }
+          : null);
+
+    if (accessDecision === 'deny') {
+      return res.status(409).json({
+        message: reservationInvalid
+          ? 'La reserva local no es valida. Debe liberarla un administrador autorizado.'
+          : `Esta sesion esta reservada para ${reservedOwner?.name || reservedOwner?.login || 'otro usuario'}.`,
+        code: reservationInvalid ? 'RESERVA_LOCAL_INVALIDA' : 'SESION_LOCAL_RESERVADA',
+        reserved_owner: reservedOwner,
+      });
+    }
+
+    if (accessDecision === 'admin_restricted') {
+      if (upgradeHash) {
+        const hashed = await bcrypt.hash(passwordInput, 12);
+        await db.query('UPDATE usuarios SET contrasena = ? WHERE id = ?', [hashed, user.id]);
+      }
+      return res.json(buildRestrictedLoginResponse({ reservedOwner, cajaId }));
     }
 
     if (upgradeHash) {
@@ -12497,6 +12552,15 @@ app.post('/api/login', async (req, res) => {
     }
 
     const token = issueAccessToken(user.id, user.nombre);
+    const reservationToken = cajaId && deviceHash
+      ? createReservationToken({
+          ownerId: Number(user.id),
+          ownerLogin: String(user.user || '').trim(),
+          ownerName: String(user.nombre || '').trim(),
+          caja: cajaId,
+          deviceHash,
+        }, { secret: config.jwtSecret })
+      : null;
     const refreshSession = await createRefreshSession({
       userId: Number(user.id),
       cajaId: cajaId || null,
@@ -12519,9 +12583,11 @@ app.post('/api/login', async (req, res) => {
       refresh_expires_in: REFRESH_TOKEN_TTL_SECONDS,
       id: user.id,
       username: user.nombre,
+      user_login: String(user.user || '').trim(),
       es_administrador: Number(user.es_administrador || 0),
       sucursal_id: sucursalId || 1,
       permisos: permissions,
+      reservation_token: reservationToken,
     });
   } catch (error) {
     console.error('Error durante el login:', error);

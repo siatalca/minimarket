@@ -236,6 +236,7 @@
             </div>
         </div>
 
+        <p id="session-reservation-owner" class="hidden" role="status"></p>
         <form id="login-form">
             <input type="text" id="username" placeholder="Username" required />
             <input type="password" id="password" placeholder="Password" required />
@@ -243,16 +244,25 @@
             <label id="msj_activo" class="hidden">Hay una sesión activa. Ingresa la contraseña para continuar o cerrar el turno anterior.</label>
         </form>
         <p id="login-error" class="hidden" role="alert">Invalid username or password</p>
+        <section id="reserved-session-restricted" class="hidden" aria-labelledby="reserved-session-title">
+            <h2 id="reserved-session-title">Sesión local reservada</h2>
+            <p id="reserved-session-restricted-owner"></p>
+            <p>Este acceso solo permite cerrar la autenticación guardada en este navegador. El turno, la caja y las ventas no se modificarán.</p>
+            <div class="login-actions">
+                <button id="release-local-session" type="button">Cerrar y liberar sesión local</button>
+                <button id="cancel-local-session-release" type="button">Cancelar</button>
+            </div>
+        </section>
     </div>
     <!--fin login-->
 
-    <script src="./js/login.js?v=20260327a"></script>
+    <script src="./js/session_reservation.js?v=20261007a"></script>
+    <script src="./js/login.js?v=20261007a"></script>
     <script src="./js/api_base.js?v=20261003a"></script>
     <script src="./js/product_name_display.js?v=20260923a"></script>
     <script src="./js/ticket_print_method.js?v=20261003b"></script>
-    <script src="./js/scripts.js?v=20261003c"></script>
+    <script src="./js/scripts.js?v=20261007a"></script>
 
 </body>
 
 </html>
-

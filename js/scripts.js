@@ -12626,8 +12626,8 @@ async function login(){
     const password = document.getElementById('password').value || '';
     const numeroCaja = String(localStorage.getItem('n_caja') || '').trim();
     const deviceHash = String(localStorage.getItem('device_fp') || '').trim();
-    const turnoOwnerCaja = String(localStorage.getItem('turno_owner_caja') || '').trim();
-    const turnoOwnerUser = String(localStorage.getItem('turno_owner_user') || '').trim();
+    const reservationApi = window.MinimarketSessionReservation;
+    const reservation = reservationApi?.readReservation(localStorage) || null;
     const loginError = document.getElementById('login-error');
     if (loginError) {
         loginError.classList.add('hidden');
@@ -12644,19 +12644,31 @@ async function login(){
         const response = await fetch(API_URL +'api/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password, numero_caja: numeroCaja || null, device_hash: deviceHash || null }),
+            body: JSON.stringify({
+                username,
+                password,
+                numero_caja: numeroCaja || null,
+                device_hash: deviceHash || null,
+                ...(reservationApi?.buildReservationLoginFields(reservation) || {}),
+            }),
         });
 
         if (response.ok) {
           const data = await response.json();
-          const loggedUserId = String(Number(data?.id || 0) || '');
-          if (numeroCaja && turnoOwnerCaja === numeroCaja && turnoOwnerUser && loggedUserId && turnoOwnerUser !== loggedUserId) {
-            if (loginError) {
-                loginError.textContent = 'Caja con turno abierto: solo el cajero que abrio el turno puede ingresar hasta cerrar caja.';
-                loginError.classList.remove('hidden');
+          if (data?.restricted_session === true) {
+            reservationApi?.clearLocalAuth(localStorage, sessionStorage);
+            if (typeof showRestrictedReservationView === 'function') {
+              showRestrictedReservationView(data.reserved_owner || null);
             }
             return;
           }
+          reservationApi?.writeReservation(localStorage, {
+            ownerId: data.id,
+            ownerLogin: data.user_login || username,
+            ownerName: data.username,
+            caja: numeroCaja,
+            reservationToken: data.reservation_token,
+          });
           // Guardar token o sesión
           setSessionTokens(data.token, data.refresh_token || null);
           localStorage.setItem('user', username);// Opcional: guardar el nombre de usuario
