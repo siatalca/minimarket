@@ -245,7 +245,11 @@ function applySessionReservationToLogin() {
   return reservation;
 }
 
-function showRestrictedReservationView(serverOwner = null) {
+let restrictedCloseSession = null;
+let restrictedCloseController = null;
+
+function showRestrictedReservationView(serverData = null) {
+  const serverOwner = serverData?.reserved_owner || serverData;
   const localReservation = getLocalSessionReservation();
   const displayReservation = localReservation || {
     ownerId: Number(serverOwner?.id || 0),
@@ -258,10 +262,17 @@ function showRestrictedReservationView(serverOwner = null) {
   const owner = document.getElementById('reserved-session-restricted-owner');
   const password = document.getElementById('password');
   const error = document.getElementById('login-error');
+  restrictedCloseSession = serverData?.close_capability ? serverData : null;
   if (form) form.classList.add('hidden');
   if (error) error.classList.add('hidden');
   if (password) password.value = '';
   if (owner) window.MinimarketSessionReservation.renderReservationOwner(owner, displayReservation);
+  const summary = document.getElementById('reserved-session-shift-summary');
+  const closeButton = document.getElementById('close-restricted-shift');
+  if (summary) summary.textContent = serverData?.shift
+    ? `Caja ${serverData.shift.caja_id}, turno ${serverData.shift.id}. El cierre se atribuirá al cajero original.`
+    : 'No hay un turno activo disponible para cierre administrativo.';
+  if (closeButton) closeButton.classList.toggle('hidden', !restrictedCloseSession);
   if (panel) panel.classList.remove('hidden');
 }
 
@@ -269,6 +280,16 @@ function restoreReservedLoginView() {
   const form = document.getElementById('login-form');
   const panel = document.getElementById('reserved-session-restricted');
   const password = document.getElementById('password');
+  restrictedCloseSession = null;
+  restrictedCloseController = null;
+  const closeButton = document.getElementById('close-restricted-shift');
+  const retryButton = document.getElementById('retry-restricted-print');
+  const receipt = document.getElementById('restricted-close-receipt');
+  const closeError = document.getElementById('restricted-close-error');
+  if (closeButton) closeButton.disabled = false;
+  if (retryButton) retryButton.classList.add('hidden');
+  if (receipt) receipt.classList.add('hidden');
+  if (closeError) closeError.classList.add('hidden');
   if (panel) panel.classList.add('hidden');
   if (form) form.classList.remove('hidden');
   applySessionReservationToLogin();
@@ -297,6 +318,78 @@ function bindRestrictedReservationActions() {
     });
   }
   if (cancelButton) cancelButton.addEventListener('click', restoreReservedLoginView);
+  const closeButton = document.getElementById('close-restricted-shift');
+  const retryButton = document.getElementById('retry-restricted-print');
+  const errorElement = document.getElementById('restricted-close-error');
+  const receiptElement = document.getElementById('restricted-close-receipt');
+  const renderReceipt = (receipt, error) => {
+    if (receiptElement) {
+      receiptElement.textContent = String(receipt?.receipt_text || 'Cierre completado.');
+      receiptElement.classList.remove('hidden');
+    }
+    if (errorElement) {
+      errorElement.textContent = error ? `La caja quedó cerrada, pero no se pudo imprimir: ${error.message}` : '';
+      errorElement.classList.toggle('hidden', !error);
+    }
+    if (retryButton) retryButton.classList.toggle('hidden', !error);
+  };
+  if (closeButton) closeButton.addEventListener('click', async () => {
+    if (!restrictedCloseSession || restrictedCloseController) return;
+    const reservation = getLocalSessionReservation();
+    const cash = Number(document.getElementById('restricted-declared-cash')?.value || 0);
+    const card = Number(document.getElementById('restricted-declared-card')?.value || 0);
+    if (cash < 0 || card < 0) return;
+    const confirmation = `Cerrar caja ${restrictedCloseSession.shift.caja_id}, turno ${restrictedCloseSession.shift.id}, `
+      + `del cajero reservado. Efectivo declarado: ${cash.toFixed(0)}. Tarjeta declarada: ${card.toFixed(0)}.`;
+    const confirmed = typeof window.appConfirm === 'function'
+      ? await window.appConfirm(confirmation, 'warning', { title: 'Confirmar cierre de caja', okText: 'Cerrar caja', cancelText: 'Cancelar' })
+      : window.confirm(confirmation);
+    if (!confirmed) return;
+    closeButton.disabled = true;
+    restrictedCloseController = window.MinimarketRestrictedShiftClose.createRestrictedCloseController({
+      closeShift: async () => {
+        const response = await fetch(API_URL + 'api/restricted-session/close-shift', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            close_capability: restrictedCloseSession.close_capability,
+            reservation_token: reservation?.reservationToken,
+            device_hash: localStorage.getItem('device_fp'), admin_id: restrictedCloseSession.admin_id,
+            numero_caja: restrictedCloseSession.shift.caja_id, turno_id: restrictedCloseSession.shift.id,
+            owner_id: restrictedCloseSession.shift.owner_id, monto_declarado: cash, monto_declarado_tarjeta: card,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'No se pudo cerrar la caja');
+        return data;
+      },
+      printReceipt: async (receipt) => printTicketLocalFirst({
+        payloadData: { ticket_text: receipt.receipt_text, print_engine: 'auto', font_size: 7, paper_width_mm: 58 },
+        localSuccessMessage: 'Cierre enviado a impresión', fallbackEndpoint: 'api/print/cut-session-ticket',
+        fallbackPayload: { cut_id: receipt.id_corte }, fallbackErrorMessage: 'No se pudo imprimir el cierre',
+      }),
+      clearLocalState: () => {
+        window.MinimarketSessionReservation.clearCompletedShiftLocalState(localStorage, sessionStorage);
+        const username = document.getElementById('username');
+        const password = document.getElementById('password');
+        if (username) username.value = '';
+        if (password) password.value = '';
+      },
+      renderReceipt,
+    });
+    try {
+      const result = await restrictedCloseController.close({ cash, card });
+      renderReceipt(result.receipt, result.printed ? null : result.error);
+    } catch (error) {
+      if (errorElement) { errorElement.textContent = error.message; errorElement.classList.remove('hidden'); }
+      restrictedCloseController = null;
+      closeButton.disabled = false;
+    }
+  });
+  if (retryButton) retryButton.addEventListener('click', async () => {
+    if (!restrictedCloseController) return;
+    const result = await restrictedCloseController.retryPrint();
+    renderReceipt(result.receipt, result.printed ? null : result.error);
+  });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

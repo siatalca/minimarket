@@ -12659,7 +12659,7 @@ async function login(){
           if (data?.restricted_session === true) {
             reservationApi?.clearLocalAuth(localStorage, sessionStorage);
             if (typeof showRestrictedReservationView === 'function') {
-              showRestrictedReservationView(data.reserved_owner || null);
+              showRestrictedReservationView(data);
             }
             return;
           }

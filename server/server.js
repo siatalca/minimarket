@@ -16,7 +16,12 @@ const {
   decideReservationAccess,
   isVerifiedAdminSia,
   buildRestrictedLoginResponse,
+  createRestrictedCloseCapability,
+  verifyRestrictedCloseCapability,
+  RestrictedCloseReplayGuard,
 } = require('./session_reservation_policy');
+const { closeShiftCore } = require('./shift_close_core');
+const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -36,6 +41,7 @@ app.options('*', cors(corsOptions));
 
 const publicRoutes = [
   { method: 'POST', path: '/api/login' },
+  { method: 'POST', path: '/api/restricted-session/close-shift' },
   { method: 'POST', path: '/api/auth/refresh' },
   { method: 'POST', path: '/api/auth/logout' },
   { method: 'POST', path: '/api/auth/verify-admin' },
@@ -13546,6 +13552,23 @@ app.post('/api/corte/cerrar', async (req, res) => {
   }
 
   try {
+    const result = await closeShiftCore({
+      database: db, cajaId, cajeroId, montoDeclaradoInput, montoDeclaradoTarjetaInput,
+      observaciones, sql: {
+        cashAmount: buildCashAmountSql,
+        cardAmount: buildCardAmountSql,
+        mixedCondition: buildMixedSaleConditionSql,
+        sumMovementAmounts,
+        sumCashExits: sumCashExitMovementAmounts,
+        sumTransferExits: sumTransferExitMovementAmounts,
+      },
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(Number(error.status || 500)).json({ message: error.message || 'Error interno del servidor' });
+  }
+
+  try {
     const [existing] = await db.query(
       `SELECT id_corte, estado, monto_inicial, hora_apertura FROM corte_caja
        WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
@@ -13917,6 +13940,65 @@ app.post('/api/auth/verify-admin', async (req, res) => {
   }
 });
 
++
+app.post('/api/restricted-session/close-shift', async (req, res) => {
+  const capability = String(req.body?.close_capability || '').trim();
+  const reservationToken = String(req.body?.reservation_token || '').trim();
+  const deviceHash = toText(req.body?.device_hash, 64);
+  const adminId = toInt(req.body?.admin_id);
+  const cajaId = toInt(req.body?.numero_caja);
+  const shiftId = toInt(req.body?.turno_id);
+  const ownerId = toInt(req.body?.owner_id);
+  let claims;
+  try {
+    claims = verifyRestrictedCloseCapability(capability, {
+      secret: config.jwtSecret, expectedAdminId: adminId, expectedCajaId: cajaId,
+      expectedShiftId: shiftId, expectedOwnerId: ownerId,
+      expectedDeviceHash: deviceHash, expectedReservationToken: reservationToken,
+    });
+    restrictedCloseReplayGuard.assertUnused(claims.jti);
+  } catch (error) {
+    return res.status(403).json({ message: error.message || 'Capacidad de cierre invalida' });
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [adminRows] = await connection.query(
+      `SELECT id, user, es_administrador FROM usuarios WHERE id = ? LIMIT 1 FOR UPDATE`,
+      [claims.adminId]
+    );
+    if (!adminRows.length || !isVerifiedAdminSia(adminRows[0])) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'Administrador no autorizado' });
+    }
+    const result = await closeShiftCore({
+      database: connection, cajaId: claims.cajaId, cajeroId: claims.ownerId,
+      expectedShiftId: claims.shiftId,
+      montoDeclaradoInput: toNumber(req.body?.monto_declarado ?? 0),
+      montoDeclaradoTarjetaInput: toNumber(req.body?.monto_declarado_tarjeta ?? 0),
+      observaciones: null,
+      auditNote: `Cierre administrativo por admin_sia (usuario ${claims.adminId})`,
+      lock: true,
+      sql: { cashAmount: buildCashAmountSql, cardAmount: buildCardAmountSql,
+        mixedCondition: buildMixedSaleConditionSql, sumMovementAmounts,
+        sumCashExits: sumCashExitMovementAmounts, sumTransferExits: sumTransferExitMovementAmounts },
+    });
+    await connection.commit();
+    restrictedCloseReplayGuard.consume(claims.jti, claims.exp);
+    console.info('Cierre administrativo restringido', {
+      admin_id: claims.adminId, caja_id: claims.cajaId, turno_id: claims.shiftId, owner_id: claims.ownerId,
+    });
+    return res.json(result);
+  } catch (error) {
+    try { await connection.rollback(); } catch (_) {}
+    return res.status(Number(error.status || 500)).json({ message: error.message || 'No se pudo cerrar la caja' });
+  } finally {
+    connection.release();
+  }
+});
+
+
 // -----------------Validacion de usuario
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
@@ -14005,7 +14087,7 @@ app.post('/api/login', async (req, res) => {
       }
 
       const [openShiftRows] = await db.query(
-        `SELECT c.usuario_id, u.nombre AS cajero_nombre, u.user AS cajero_user
+        `SELECT c.id_corte, c.usuario_id, u.nombre AS cajero_nombre, u.user AS cajero_user
          FROM corte_caja c
          LEFT JOIN usuarios u ON u.id = c.usuario_id
          WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.estado = 'abierto'
@@ -14015,6 +14097,7 @@ app.post('/api/login', async (req, res) => {
       );
       if (openShiftRows.length > 0) {
         openShiftOwner = {
+          shiftId: Number(openShiftRows[0].id_corte || 0),
           id: Number(openShiftRows[0].usuario_id || 0),
           login: String(openShiftRows[0].cajero_user || '').trim(),
           name: String(openShiftRows[0].cajero_nombre || '').trim(),
@@ -14055,7 +14138,19 @@ app.post('/api/login', async (req, res) => {
         const hashed = await bcrypt.hash(passwordInput, 12);
         await db.query('UPDATE usuarios SET contrasena = ? WHERE id = ?', [hashed, user.id]);
       }
-      return res.json(buildRestrictedLoginResponse({ reservedOwner, cajaId }));
+      const closeCapability = reservationTokenInput && deviceHash && openShiftOwner?.shiftId
+        ? createRestrictedCloseCapability({
+            adminId: Number(user.id), adminLogin: user.user, adminRole: user.es_administrador,
+            cajaId, shiftId: openShiftOwner.shiftId, ownerId: openShiftOwner.id,
+            deviceHash, reservationToken: reservationTokenInput,
+          }, { secret: config.jwtSecret })
+        : null;
+      return res.json({
+        ...buildRestrictedLoginResponse({ reservedOwner, cajaId }),
+        close_capability: closeCapability,
+        admin_id: Number(user.id),
+        shift: openShiftOwner ? { id: openShiftOwner.shiftId, owner_id: openShiftOwner.id, caja_id: cajaId } : null,
+      });
     }
 
     if (upgradeHash) {

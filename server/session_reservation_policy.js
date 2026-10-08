@@ -1,7 +1,9 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const RESERVATION_SCOPE = 'session_reservation';
 const RESERVATION_ISSUER = 'minimarket';
+const RESTRICTED_CLOSE_SCOPE = 'restricted_shift_close';
 
 function reservationSecret(secret) {
   const raw = String(secret || '').trim();
@@ -94,10 +96,101 @@ function buildRestrictedLoginResponse({ reservedOwner = null, cajaId = null } = 
   };
 }
 
+function restrictedCloseSecret(secret) {
+  const raw = String(secret || '').trim();
+  if (!raw) throw new Error('JWT_SECRET requerido para capacidad de cierre');
+  return `${raw}:restricted-shift-close:v1`;
+}
+
+function reservationFingerprint(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function createRestrictedCloseCapability(input = {}, { secret, expiresIn = '5m', jwtId } = {}) {
+  const adminId = Number(input.adminId || 0);
+  const cajaId = Number(input.cajaId || 0);
+  const shiftId = Number(input.shiftId || 0);
+  const ownerId = Number(input.ownerId || 0);
+  const deviceHash = String(input.deviceHash || '').trim();
+  const reservationToken = String(input.reservationToken || '').trim();
+  if (!adminId || String(input.adminLogin || '').trim().toLowerCase() !== 'admin_sia'
+      || Number(input.adminRole || 0) !== 1 || !cajaId || !shiftId || !ownerId
+      || !deviceHash || !reservationToken) {
+    throw new Error('Datos incompletos para capacidad de cierre restringido');
+  }
+  return jwt.sign({
+    scope: RESTRICTED_CLOSE_SCOPE,
+    admin_id: adminId,
+    admin_login: 'admin_sia',
+    admin_role: 1,
+    caja_id: cajaId,
+    shift_id: shiftId,
+    owner_id: ownerId,
+    device_hash: deviceHash,
+    reservation_hash: reservationFingerprint(reservationToken),
+  }, restrictedCloseSecret(secret), {
+    expiresIn,
+    issuer: RESERVATION_ISSUER,
+    audience: RESTRICTED_CLOSE_SCOPE,
+    jwtid: jwtId || crypto.randomUUID(),
+  });
+}
+
+function verifyRestrictedCloseCapability(token, expected = {}) {
+  const payload = jwt.verify(String(token || ''), restrictedCloseSecret(expected.secret), {
+    issuer: RESERVATION_ISSUER,
+    audience: RESTRICTED_CLOSE_SCOPE,
+  });
+  const claims = {
+    adminId: Number(payload.admin_id || 0),
+    cajaId: Number(payload.caja_id || 0),
+    shiftId: Number(payload.shift_id || 0),
+    ownerId: Number(payload.owner_id || 0),
+    deviceHash: String(payload.device_hash || ''),
+    reservationHash: String(payload.reservation_hash || ''),
+    jti: String(payload.jti || ''),
+    exp: Number(payload.exp || 0),
+  };
+  if (payload.scope !== RESTRICTED_CLOSE_SCOPE || payload.admin_login !== 'admin_sia'
+      || Number(payload.admin_role || 0) !== 1 || !claims.jti) {
+    throw new Error('Capacidad de cierre invalida');
+  }
+  const checks = [
+    [claims.adminId, Number(expected.expectedAdminId || 0)],
+    [claims.cajaId, Number(expected.expectedCajaId || 0)],
+    [claims.shiftId, Number(expected.expectedShiftId || 0)],
+    [claims.ownerId, Number(expected.expectedOwnerId || 0)],
+    [claims.deviceHash, String(expected.expectedDeviceHash || '').trim()],
+    [claims.reservationHash, reservationFingerprint(expected.expectedReservationToken)],
+  ];
+  if (checks.some(([actual, wanted]) => !wanted || actual !== wanted)) {
+    throw new Error('Capacidad fuera de alcance');
+  }
+  return claims;
+}
+
+class RestrictedCloseReplayGuard {
+  constructor() { this.used = new Map(); }
+  prune(now = Math.floor(Date.now() / 1000)) {
+    for (const [jti, exp] of this.used.entries()) if (exp && exp < now) this.used.delete(jti);
+  }
+  assertUnused(jti) {
+    this.prune();
+    if (this.used.has(String(jti || ''))) throw new Error('Capacidad ya utilizada');
+  }
+  consume(jti, exp = Math.floor(Date.now() / 1000) + 300) {
+    this.assertUnused(jti);
+    this.used.set(String(jti || ''), Number(exp || 0));
+  }
+}
+
 module.exports = {
   createReservationToken,
   verifyReservationToken,
   decideReservationAccess,
   isVerifiedAdminSia,
   buildRestrictedLoginResponse,
+  createRestrictedCloseCapability,
+  verifyRestrictedCloseCapability,
+  RestrictedCloseReplayGuard,
 };

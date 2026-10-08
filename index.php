@@ -247,21 +247,30 @@
         <section id="reserved-session-restricted" class="hidden" aria-labelledby="reserved-session-title">
             <h2 id="reserved-session-title">Sesión local reservada</h2>
             <p id="reserved-session-restricted-owner"></p>
-            <p>Este acceso solo permite cerrar la autenticación guardada en este navegador. El turno, la caja y las ventas no se modificarán.</p>
+            <p id="reserved-session-shift-summary"></p>
+            <label for="restricted-declared-cash">Efectivo declarado</label>
+            <input id="restricted-declared-cash" type="number" min="0" step="1" value="0">
+            <label for="restricted-declared-card">Tarjeta declarada</label>
+            <input id="restricted-declared-card" type="number" min="0" step="1" value="0">
             <div class="login-actions">
+                <button id="close-restricted-shift" type="button">Cerrar caja y liberar equipo</button>
                 <button id="release-local-session" type="button">Cerrar y liberar sesión local</button>
                 <button id="cancel-local-session-release" type="button">Cancelar</button>
             </div>
+            <p id="restricted-close-error" class="hidden" role="alert"></p>
+            <pre id="restricted-close-receipt" class="hidden"></pre>
+            <button id="retry-restricted-print" class="hidden" type="button">Reintentar impresión</button>
         </section>
     </div>
     <!--fin login-->
 
     <script src="./js/session_reservation.js?v=20261007b"></script>
-    <script src="./js/login.js?v=20261007a"></script>
+    <script src="./js/restricted_shift_close.js?v=20261007a"></script>
+    <script src="./js/login.js?v=20261007b"></script>
     <script src="./js/api_base.js?v=20261003a"></script>
     <script src="./js/product_name_display.js?v=20260923a"></script>
     <script src="./js/ticket_print_method.js?v=20261003b"></script>
-    <script src="./js/scripts.js?v=20261007b"></script>
+    <script src="./js/scripts.js?v=20261007c"></script>
 
 </body>
 
