@@ -50,7 +50,6 @@ const publicRoutes = [
   { method: 'GET', path: '/api/getCajas' },
   { method: 'POST', path: '/api/addInfo' },
   { method: 'POST', path: '/api/addCaja' },
-  { method: 'POST', path: '/api/cajas/upsert' },
   { method: 'GET', path: '/api/device-caja/resolve' },
   { method: 'POST', path: '/api/device-caja/bind' },
   { method: 'GET', path: '/api/serial-ports' },
@@ -477,6 +476,25 @@ async function isAdminSiaUser(userId, executor = db) {
   );
   if (!rows.length) return false;
   return String(rows[0]?.user || '').trim().toLowerCase() === 'admin_sia';
+}
+
+async function requireAdministrator(req, res) {
+  try {
+    const userId = toInt(req.user?.sub);
+    const [rows] = userId
+      ? await db.query('SELECT user, es_administrador FROM usuarios WHERE id = ? LIMIT 1', [userId])
+      : [[]];
+    const row = rows[0];
+    if (row && (Number(row.es_administrador) === 1 || String(row.user || '').trim().toLowerCase() === 'admin_sia')) {
+      return true;
+    }
+    const message = 'Solo un administrador puede realizar esta accion';
+    res.status(403).json({ message, error: message });
+    return false;
+  } catch (_) {
+    res.status(500).json({ message: 'No se pudo validar el permiso administrativo' });
+    return false;
+  }
 }
 
 function normalizeHourMinute(value, fallback = '00:00') {
@@ -3893,7 +3911,19 @@ app.use(async (req, res, next) => {
   if (!req.path.startsWith('/api/')) {
     return next();
   }
-  if (req.method === 'OPTIONS' || isPublicRoute(req)) {
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+  if (isPublicRoute(req)) {
+    // Rutas publicas: si viene un token valido se identifica al usuario (ver server/server.js).
+    const optionalToken = getBearerToken(req);
+    if (optionalToken) {
+      try {
+        req.user = jwt.verify(optionalToken, config.jwtSecret);
+      } catch (_) {
+        req.user = undefined;
+      }
+    }
     return next();
   }
 
@@ -4456,6 +4486,7 @@ app.get('/api/cajeros', async (req, res) => {
 });
 
 app.post('/api/cajeros', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const username = toText(req.body?.user, 80);
   const nombre = toText(req.body?.nombre, 120);
   const plainPassword = typeof req.body?.contrasena === 'string' ? req.body.contrasena : '';
@@ -4508,6 +4539,7 @@ app.post('/api/cajeros', async (req, res) => {
 });
 
 app.put('/api/cajeros/:id', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const userId = toInt(req.params?.id);
   const username = toText(req.body?.user, 80);
   const nombre = toText(req.body?.nombre, 120);
@@ -4582,6 +4614,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
 });
 
 app.delete('/api/cajeros/:id', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const userId = toInt(req.params?.id);
   if (!userId) {
     return res.status(400).json({ error: 'ID de cajero inválido' });
@@ -13350,6 +13383,14 @@ app.post('/api/sales', async (req, res) => {
 
 // ---------------almacena la informacion del local con los permisos para el sistema
 app.post('/api/addInfo', async (req, res) => {
+  // Ruta publica solo para la configuracion inicial (ver server/server.js).
+  try {
+    const [infoRows] = await db.query('SELECT COUNT(*) AS total FROM info');
+    if (Number(infoRows[0]?.total || 0) > 0 && !(await requireAdministrator(req, res))) return;
+  } catch (err) {
+    console.error('No se pudo validar la configuracion inicial:', err);
+    return res.status(500).json({ error: 'No se pudo validar la configuracion del negocio' });
+  }
   const {
     nombre_local,
     telefono_local,
@@ -13482,6 +13523,7 @@ app.post('/api/addCaja', async (req, res) => {
 });
 
 app.post('/api/cajas/upsert', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const cajaId = toInt(req.body?.numero_caja);
   const cajaName = toText(req.body?.nombre_caja, 120);
   const boxState = toBool(req.body?.estado);
@@ -13581,6 +13623,7 @@ app.post('/api/cajas/upsert', async (req, res) => {
 });
 
 app.delete('/api/cajas/:numero', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const cajaId = toInt(req.params?.numero);
   if (!isValidCajaNumber(cajaId)) {
     return res.status(400).json({ error: 'Numero de caja invalido' });

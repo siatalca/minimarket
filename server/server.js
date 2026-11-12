@@ -50,7 +50,6 @@ const publicRoutes = [
   { method: 'GET', path: '/api/getCajas' },
   { method: 'POST', path: '/api/addInfo' },
   { method: 'POST', path: '/api/addCaja' },
-  { method: 'POST', path: '/api/cajas/upsert' },
   { method: 'GET', path: '/api/device-caja/resolve' },
   { method: 'POST', path: '/api/device-caja/bind' },
   { method: 'GET', path: '/api/serial-ports' },
@@ -525,7 +524,8 @@ async function requireAdministrator(req, res) {
     if (row && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
       return true;
     }
-    res.status(403).json({ message: 'Solo un administrador puede cambiar esta configuracion' });
+    const message = 'Solo un administrador puede realizar esta accion';
+    res.status(403).json({ message, error: message });
     return false;
   } catch (_) {
     res.status(500).json({ message: 'No se pudo validar el permiso administrativo' });
@@ -5332,6 +5332,7 @@ app.get('/api/cajeros', async (req, res) => {
 });
 
 app.post('/api/cajeros', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const username = toText(req.body?.user, 80);
   const nombre = toText(req.body?.nombre, 120);
   const plainPassword = typeof req.body?.contrasena === 'string' ? req.body.contrasena : '';
@@ -5387,6 +5388,7 @@ app.post('/api/cajeros', async (req, res) => {
 });
 
 app.put('/api/cajeros/:id', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const userId = toInt(req.params?.id);
   const username = toText(req.body?.user, 80);
   const nombre = toText(req.body?.nombre, 120);
@@ -5471,6 +5473,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
 });
 
 app.delete('/api/cajeros/:id', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const userId = toInt(req.params?.id);
   if (!userId) {
     return res.status(400).json({ error: 'ID de cajero inválido' });
@@ -14910,6 +14913,15 @@ app.post('/api/sales', async (req, res) => {
 
 // ---------------almacena la informacion del local con los permisos para el sistema
 app.post('/api/addInfo', async (req, res) => {
+  // Ruta publica solo para la configuracion inicial: si el negocio ya tiene datos,
+  // reemplazarlos exige sesion de administrador (antes cualquiera podia sobrescribirlos).
+  try {
+    const [infoRows] = await db.query('SELECT COUNT(*) AS total FROM info');
+    if (Number(infoRows[0]?.total || 0) > 0 && !(await requireAdministrator(req, res))) return;
+  } catch (err) {
+    console.error('No se pudo validar la configuracion inicial:', err);
+    return res.status(500).json({ error: 'No se pudo validar la configuracion del negocio' });
+  }
   const {
     nombre_local,
     telefono_local,
@@ -15051,6 +15063,7 @@ app.post('/api/addCaja', async (req, res) => {
 });
 
 app.post('/api/cajas/upsert', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const cajaId = toInt(req.body?.numero_caja);
   const cajaName = toText(req.body?.nombre_caja, 120);
   const boxState = toBool(req.body?.estado);
@@ -15162,6 +15175,7 @@ app.post('/api/cajas/upsert', async (req, res) => {
 });
 
 app.delete('/api/cajas/:numero', async (req, res) => {
+  if (!(await requireAdministrator(req, res))) return;
   const cajaId = toInt(req.params?.numero);
   if (!isValidCajaNumber(cajaId)) {
     return res.status(400).json({ error: 'Numero de caja invalido' });
