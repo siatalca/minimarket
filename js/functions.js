@@ -962,6 +962,15 @@ document.querySelectorAll('.panel .tab').forEach(tab => {
 /* Mostrar la información en la consola
 */
 
-
-
-
+// Escapa texto antes de insertarlo como HTML (nombres, descripciones, etc.).
+// La pantalla principal ya la recibe de scripts.js; aqui queda disponible para las ventanas emergentes.
+if (typeof window.escapeHtml !== 'function') {
+  window.escapeHtml = function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+}

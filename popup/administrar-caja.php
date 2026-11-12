@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261003c"></script>
+    <script src="../js/functions.js?v=20261112a"></script>
     <style>
         body {
             padding: 14px 16px;
@@ -497,8 +497,8 @@
                 slot.innerHTML = `
                     <img src="../img/cajero-automatico.png" alt="Caja ${number}">
                     <div class="box-slot-number">Caja ${number}</div>
-                    <div class="box-slot-name">${box?.nombre_caja || 'Sin configurar'}</div>
-                    <div class="box-slot-branch">${box?.sucursal_nombre || 'Sucursal Principal'}</div>
+                    <div class="box-slot-name">${escapeHtml(box?.nombre_caja || 'Sin configurar')}</div>
+                    <div class="box-slot-branch">${escapeHtml(box?.sucursal_nombre || 'Sucursal Principal')}</div>
                     <span class="box-slot-state${isEnabled ? '' : ' off'}">${isEnabled ? 'Habilitada' : 'Inactiva'}</span>
                 `;
                 slot.addEventListener('click', () => {
@@ -529,7 +529,7 @@
                 return;
             }
             select.innerHTML = branches
-                .map((branch) => `<option value="${branch.id_sucursal}">${branch.nombre}</option>`)
+                .map((branch) => `<option value="${escapeHtml(branch.id_sucursal)}">${escapeHtml(branch.nombre)}</option>`)
                 .join('');
         }
 

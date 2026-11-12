@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261003c"></script>
+    <script src="../js/functions.js?v=20261112a"></script>
     <style>
         body { padding: 0; background: var(--clr-bg-light); }
         .content {
@@ -210,12 +210,12 @@
                 item.innerHTML = `
                     <div class="branch-item-head">
                         <div>
-                            <div class="branch-item-name">${branch.nombre || ''}</div>
-                            <div class="branch-item-code">Codigo: ${branch.codigo || ''}</div>
+                            <div class="branch-item-name">${escapeHtml(branch.nombre || '')}</div>
+                            <div class="branch-item-code">Codigo: ${escapeHtml(branch.codigo || '')}</div>
                         </div>
                         <span class="branch-pill ${Number(branch.activa || 0) === 1 ? '' : 'off'}">${Number(branch.activa || 0) === 1 ? 'Activa' : 'Inactiva'}</span>
                     </div>
-                    <div class="branch-item-meta">Direccion: ${branch.direccion || 'Sin direccion'} | Cajas: ${Number(branch.cajas_total || 0)}</div>
+                    <div class="branch-item-meta">Direccion: ${escapeHtml(branch.direccion || 'Sin direccion')} | Cajas: ${Number(branch.cajas_total || 0)}</div>
                 `;
                 item.addEventListener('click', () => {
                     selectedBranchId = id;

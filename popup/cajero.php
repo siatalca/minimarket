@@ -364,7 +364,7 @@
     </div>
 
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261003c"></script>
+    <script src="../js/functions.js?v=20261112a"></script>
     <script>
         const API_URL = window.MinimarketApi.resolveApiBase();
 
@@ -588,8 +588,8 @@
                 const stateText = isActive ? 'Activo' : 'Inactivo';
                 li.innerHTML = `
                     <div>
-                        <strong>${cashier.nombre || ''}</strong>
-                        <div class="meta">@${cashier.user || ''}</div>
+                        <strong>${escapeHtml(cashier.nombre || '')}</strong>
+                        <div class="meta">@${escapeHtml(cashier.user || '')}</div>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center;">
                         ${isAdmin ? '<span class="role-tag">Admin</span>' : ''}

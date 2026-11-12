@@ -25,6 +25,8 @@ const { applyInventoryDelta, computeCancellationRestock, recordInventoryMovement
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
+// Detras de Nginx (mismo equipo): toma la IP real del cliente desde X-Forwarded-For.
+app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '1mb' }));
 
 const corsOrigins = config.corsOrigin === '*'
@@ -39,6 +41,30 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+const {
+  createRateLimiter,
+  clientIpKey,
+  rejectRateLimited,
+  allowRegistrationRequest,
+  createLoginGuard,
+  loginBlockedMessage,
+} = require('./rate_limiter');
+const ONE_HOUR_MS = 60 * 60 * 1000;
+// Intentos de login (reglas en rate_limiter.js: por IP, por cuenta + IP y por cuenta).
+const loginGuard = createLoginGuard();
+// Registro publico de equipos y cajas (pantalla previa al login).
+const addCajaIpLimiter = createRateLimiter({ max: 20, windowMs: ONE_HOUR_MS });
+const bindIpLimiter = createRateLimiter({ max: 120, windowMs: ONE_HOUR_MS });
+const addCajaGlobalLimiter = createRateLimiter({ max: 50, windowMs: ONE_HOUR_MS });
+const bindGlobalLimiter = createRateLimiter({ max: 600, windowMs: ONE_HOUR_MS });
+
+// Registra el error completo en el log del servidor y devuelve un texto generico para el
+// cliente: los 500 no deben mostrar SQL, rutas ni otros detalles internos.
+function logInternalError(err) {
+  console.error(err);
+  return 'Error interno del servidor';
+}
 
 const publicRoutes = [
   { method: 'POST', path: '/api/login' },
@@ -518,17 +544,19 @@ async function requireAdministrator(req, res) {
   try {
     const userId = toInt(req.user?.sub);
     const [rows] = userId
-      ? await db.query('SELECT user, es_administrador FROM usuarios WHERE id = ? LIMIT 1', [userId])
+      ? await db.query('SELECT user, es_administrador, estado_usuario FROM usuarios WHERE id = ? LIMIT 1', [userId])
       : [[]];
     const row = rows[0];
-    if (row && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
+    // Un administrador desactivado no puede seguir actuando aunque su sesion no haya vencido.
+    if (row && Number(row.estado_usuario ?? 1) === 1 && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
       return true;
     }
     const message = 'Solo un administrador puede realizar esta accion';
     res.status(403).json({ message, error: message });
     return false;
   } catch (_) {
-    res.status(500).json({ message: 'No se pudo validar el permiso administrativo' });
+    const failure = 'No se pudo validar el permiso administrativo';
+    res.status(500).json({ message: failure, error: failure });
     return false;
   }
 }
@@ -4677,7 +4705,7 @@ app.get('/api/productos', async (req, res) => {
     );
     res.json(results);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4800,7 +4828,7 @@ app.get('/api/getInfo', async (req, res) => {
     );
     res.json(results.map(omitInfoOwnerColumns));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4925,7 +4953,7 @@ app.get('/api/getCajas', async (req, res) => {
       res.json(0);
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -5254,6 +5282,7 @@ app.get('/api/device-caja/resolve', async (req, res) => {
 });
 
 app.post('/api/device-caja/bind', async (req, res) => {
+  if (!allowRegistrationRequest(req, res, bindIpLimiter, bindGlobalLimiter)) return;
   const deviceHash = normalizeDeviceHash(req.body?.fingerprint);
   const cajaId = toInt(req.body?.numero_caja);
   const requestedName = typeof req.body?.nombre_caja === 'string' ? req.body.nombre_caja.trim() : '';
@@ -5295,7 +5324,7 @@ app.get('/api/usuarios', async (req, res) => {
     const showAdminSia = await isAdminSiaUser(req.user?.sub);
     return res.json(showAdminSia ? results : results.filter((row) => !isAdminSiaUsername(row.user)));
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -5327,7 +5356,7 @@ app.get('/api/cajeros', async (req, res) => {
     });
     return res.json(formatted);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -5381,7 +5410,7 @@ app.post('/api/cajeros', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   } finally {
     if (connection) connection.release();
   }
@@ -5466,7 +5495,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   } finally {
     if (connection) connection.release();
   }
@@ -5503,7 +5532,7 @@ app.delete('/api/cajeros/:id', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   } finally {
     if (connection) connection.release();
   }
@@ -7566,7 +7595,7 @@ app.get('/api/productos/search', async (req, res) => {
     );
     return res.json(results);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -13591,7 +13620,7 @@ app.post('/api/corte/cerrar', async (req, res) => {
     });
     return res.json(result);
   } catch (error) {
-    return res.status(Number(error.status || 500)).json({ message: error.message || 'Error interno del servidor' });
+    return res.status(Number(error.status || 500)).json({ message: error.status ? (error.message || 'Error interno del servidor') : logInternalError(error) });
   }
 
   try {
@@ -14018,7 +14047,7 @@ app.post('/api/restricted-session/close-shift', async (req, res) => {
     return res.json(result);
   } catch (error) {
     try { await connection.rollback(); } catch (_) {}
-    return res.status(Number(error.status || 500)).json({ message: error.message || 'No se pudo cerrar la caja' });
+    return res.status(Number(error.status || 500)).json({ message: error.status ? (error.message || 'No se pudo cerrar la caja') : logInternalError(error) });
   } finally {
     connection.release();
   }
@@ -14036,6 +14065,14 @@ app.post('/api/login', async (req, res) => {
 
   if (!usernameInput || !passwordInput) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
+  }
+
+  // El intento se cuenta antes de esperar a la base de datos, para que pedidos simultaneos
+  // no puedan saltarse el limite.
+  const loginIp = clientIpKey(req);
+  const ipAttempt = loginGuard.beginAttempt(loginIp);
+  if (!ipAttempt.ok) {
+    return rejectRateLimited(res, ipAttempt.retryMs, loginBlockedMessage(ipAttempt.retryMs));
   }
 
   try {
@@ -14056,6 +14093,11 @@ app.post('/api/login', async (req, res) => {
     }
 
     const user = rows[0];
+    // Limite por cuenta (id real, no el texto escrito), antes de comparar la clave.
+    const accountAttempt = loginGuard.checkAccount(user.id, loginIp);
+    if (!accountAttempt.ok) {
+      return rejectRateLimited(res, accountAttempt.retryMs, loginBlockedMessage(accountAttempt.retryMs));
+    }
     const storedPassword = user.contrasena || '';
     let passwordOk = false;
     let upgradeHash = false;
@@ -14070,6 +14112,7 @@ app.post('/api/login', async (req, res) => {
     if (!passwordOk) {
       return res.status(401).json({ message: 'Credenciales invalidas' });
     }
+    loginGuard.success(user.id, loginIp);
 
     let reservation = null;
     let reservationInvalid = false;
@@ -14915,9 +14958,11 @@ app.post('/api/sales', async (req, res) => {
 app.post('/api/addInfo', async (req, res) => {
   // Ruta publica solo para la configuracion inicial: si el negocio ya tiene datos,
   // reemplazarlos exige sesion de administrador (antes cualquiera podia sobrescribirlos).
+  let isInitialSetup = false;
   try {
     const [infoRows] = await db.query('SELECT COUNT(*) AS total FROM info');
-    if (Number(infoRows[0]?.total || 0) > 0 && !(await requireAdministrator(req, res))) return;
+    isInitialSetup = Number(infoRows[0]?.total || 0) === 0;
+    if (!isInitialSetup && !(await requireAdministrator(req, res))) return;
   } catch (err) {
     console.error('No se pudo validar la configuracion inicial:', err);
     return res.status(500).json({ error: 'No se pudo validar la configuracion del negocio' });
@@ -14967,7 +15012,11 @@ app.post('/api/addInfo', async (req, res) => {
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
-    await connection.query('DELETE FROM info');
+    // En la configuracion inicial no se borra: si dos pedidos llegan a la vez, el segundo
+    // choca con la clave primaria id_info = 1 y se rechaza en vez de pisar al primero.
+    if (!isInitialSetup) {
+      await connection.query('DELETE FROM info');
+    }
     await connection.query(
       `INSERT INTO info (
         id_info, nombre, telefono, mail, tipo_local, inventario, credito,
@@ -14999,6 +15048,9 @@ app.post('/api/addInfo', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
+    if (isInitialSetup && err?.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'El negocio ya fue configurado. Inicia sesion para modificarlo.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Error al registrar la informacion del local' });
   } finally {
@@ -15008,6 +15060,7 @@ app.post('/api/addInfo', async (req, res) => {
 
 // ---------------almacena el munero de la caja y su estado activada/desactivada
 app.post('/api/addCaja', async (req, res) => {
+  if (!allowRegistrationRequest(req, res, addCajaIpLimiter, addCajaGlobalLimiter)) return;
   const { numero_caja, nombre_caja, estado, fingerprint } = req.body;
   const cajaId = toInt(numero_caja);
   const cajaName = toText(nombre_caja, 120);
@@ -15444,7 +15497,7 @@ app.put('/api/updateUser/', async (req, res) => {
     );
     res.json({ message: 'estado del usuario actualizado' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 

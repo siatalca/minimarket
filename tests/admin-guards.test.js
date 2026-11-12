@@ -44,10 +44,55 @@ for (const file of BACKENDS) {
     const start = source.indexOf("app.post('/api/addInfo', async (req, res) => {");
     const head = source.slice(start, start + 700);
     assert.match(head, /SELECT COUNT\(\*\) AS total FROM info/);
-    assert.match(head, /> 0 && !\(await requireAdministrator\(req, res\)\)\) return;/);
+    assert.match(head, /isInitialSetup = Number\(infoRows\[0\]\?\.total \|\| 0\) === 0;/);
+    assert.match(head, /if \(!isInitialSetup && !\(await requireAdministrator\(req, res\)\)\) return;/);
   });
 
   test(`${label}: las rutas publicas reconocen la sesion si viene`, () => {
     assert.match(source, /if \(isPublicRoute\(req\)\) \{[\s\S]{0,400}req\.user = jwt\.verify\(optionalToken/);
+  });
+}
+
+for (const file of BACKENDS) {
+  const label = path.relative(path.join(__dirname, '..'), file);
+  const source = fs.readFileSync(file, 'utf8');
+
+  test(`${label}: un administrador desactivado no pasa la validacion`, () => {
+    const start = source.indexOf('async function requireAdministrator(');
+    const body = source.slice(start, source.indexOf('\n}', start));
+    assert.match(body, /estado_usuario/);
+    assert.match(body, /Number\(row\.estado_usuario \?\? 1\) === 1/);
+  });
+
+  test(`${label}: la configuracion inicial no borra datos y rechaza la segunda`, () => {
+    const start = source.indexOf("app.post('/api/addInfo'");
+    const handler = source.slice(start, source.indexOf("app.post('/api/addCaja'", start));
+    assert.match(handler, /if \(!isInitialSetup\) \{\s*await connection\.query\('DELETE FROM info'\);/);
+    assert.match(handler, /isInitialSetup && err\?\.code === 'ER_DUP_ENTRY'/);
+  });
+
+  test(`${label}: login y registro publico tienen limite de intentos`, () => {
+    assert.match(source, /require\('\.\/rate_limiter'\)/);
+    // El orden importa: contar el intento antes de esperar a la base y a bcrypt.
+    assert.match(source, /const ipAttempt = loginGuard\.beginAttempt\(loginIp\);/);
+    assert.match(source, /const accountAttempt = loginGuard\.checkAccount\(user\.id, loginIp\);[\s\S]{0,400}bcrypt\.compare/);
+    assert.match(source, /loginGuard\.success\(user\.id, loginIp\);/);
+    for (const route of ["app.post('/api/addCaja', async (req, res) => {", "app.post('/api/device-caja/bind', async (req, res) => {"]) {
+      const start = source.indexOf(route);
+      const firstLine = source.slice(start + route.length).trimStart().split(/\r?\n/)[0];
+      assert.match(firstLine, /^if \(!allowRegistrationRequest\(req, res,/, route);
+    }
+  });
+
+  test(`${label}: protege admin_sia y la caja 8`, () => {
+    assert.match(source, /function isAdminSiaBox\(cajaId\)/);
+    assert.ok((source.match(/isAdminSiaBox\(cajaId\) && !\(await isAdminSiaUser\(req\.user\?\.sub\)\)/g) || []).length >= 4,
+      'addCaja, upsert, delete y bind deben bloquear la caja 8');
+    assert.match(source, /results\.filter\(\(row\) => !isAdminSiaBox\(row\.n_caja\)\)/);
+    assert.match(source, /results\.filter\(\(row\) => !isAdminSiaUsername\(row\.user\)\)/);
+  });
+
+  test(`${label}: los errores 500 no devuelven el detalle interno`, () => {
+    assert.doesNotMatch(source, /status\(500\)\.json\(\{ (error|message): (err|error)\.message/);
   });
 }

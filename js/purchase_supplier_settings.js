@@ -102,8 +102,8 @@ function buildItemHtml(type, row) {
     return `
         <div class="buy-list-item">
             <div>
-                <strong>${row.name}<span class="buy-badge">${badgeText}</span></strong><br>
-                <small>${row.contact_name || 'Sin contacto'} | ${row.phone || 'Sin telefono'}${row.email ? ` | ${row.email}` : ''}</small>
+                <strong>${escapeHtml(row.name)}<span class="buy-badge">${badgeText}</span></strong><br>
+                <small>${escapeHtml(row.contact_name || 'Sin contacto')} | ${escapeHtml(row.phone || 'Sin telefono')}${row.email ? ` | ${escapeHtml(row.email)}` : ''}</small>
             </div>
             <div style="display:flex; gap:6px;">
                 <button type="button" class="btn" data-edit-type="${type}" data-edit-id="${row.id}" style="height:28px; min-width:70px;">Editar</button>

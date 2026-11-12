@@ -2079,7 +2079,7 @@ function renderCutHistoryPopupRows(rows) {
         const actionId = `cut-history-open-${index}`;
         tr.innerHTML = `
             <td>${row.caja_id || '-'}</td>
-            <td>${row.cajero_nombre || '-'}</td>
+            <td>${escapeHtml(row.cajero_nombre || '-')}</td>
             <td>${formatCutDateForHeader(row.fecha || '')}</td>
             <td>${buildCutHistoryTimeRange(row.hora_apertura, row.hora_cierre)}</td>
             <td style="text-align:right;">$${Number(row.total_ventas || 0).toFixed(0)}</td>
@@ -2414,7 +2414,7 @@ function renderCutRebuildRows(rows = []) {
             <td>${formatCutRebuildSaleDateTime(row?.fecha)}</td>
             <td>${row?.numero_ticket || '-'}</td>
             <td>${row?.caja_id || '-'}</td>
-            <td>${row?.cajero_nombre || '-'}</td>
+            <td>${escapeHtml(row?.cajero_nombre || '-')}</td>
             <td style="text-align:right;">#${Number(row?.turno_id || 0) || '-'}</td>
             <td style="text-align:center;">
                 <input class="cut-rebuild-linked-check" type="checkbox" disabled ${hasAssociatedCut ? 'checked' : ''} title="${associatedCutLabel}">
@@ -2527,7 +2527,7 @@ function renderCutRebuildCutPickerRows(rows = []) {
             <td>${formatCutDateForHeader(row?.fecha || '')}</td>
             <td>${buildCutHistoryTimeRange(row?.hora_apertura, row?.hora_cierre)}</td>
             <td>${row?.caja_id || '-'}</td>
-            <td>${row?.cajero_nombre || '-'}</td>
+            <td>${escapeHtml(row?.cajero_nombre || '-')}</td>
             <td>${row?.estado || '-'}</td>
             <td style="text-align:right;">${Number(row?.transacciones || 0)}</td>
             <td style="text-align:right;">$${formatMoney(row?.total_ventas || 0)}</td>
@@ -9482,7 +9482,7 @@ async function performProductSuggestionSearch(queryText) {
         searchProductsLastResults.forEach((row) => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${row.descripcion || ''}</td>
+                <td>${escapeHtml(row.descripcion || '')}</td>
                 <td style="text-align:right;">$${Number(row.precio_venta || 0).toFixed(0)}</td>
                 <td style="text-align:right;">${Number(row.cantidad_actual || 0).toFixed(0)}</td>
                 <td style="text-align:center;"><input type="radio" name="search-product-choice" value="${row.id_producto}"></td>
@@ -10443,7 +10443,7 @@ async function loadProductSupplierOptions() {
             const id = Number(row.id || 0);
             const name = String(row.name || '').trim();
             if (!id || !name) return;
-            options.push(`<option value=\"${id}\">${name}</option>`);
+            options.push(`<option value=\"${escapeHtml(id)}\">${escapeHtml(name)}</option>`);
         });
         select.innerHTML = options.join('');
         if (previous && select.querySelector(`option[value=\"${previous}\"]`)) {
@@ -13017,7 +13017,7 @@ async function loadDepartmentOptions(targetId, selectedName = '') {
         select.innerHTML = list.map((row) => {
             const name = normalizeText(row.nombre || row.departamento || '');
             const selected = normalizeText(selectedName) === name ? ' selected' : '';
-            return `<option value="${name}"${selected}>${name}</option>`;
+            return `<option value="${escapeHtml(name)}"${selected}>${escapeHtml(name)}</option>`;
         }).join('');
     } catch (_) {
         select.innerHTML = '';
@@ -13046,7 +13046,7 @@ async function loadProductSupplierOptions() {
             const supplierId = Number(row.id || 0);
             const name = normalizeText(row.name);
             if (!supplierId || !name) return;
-            html.push(`<option value="${supplierId}">${name}</option>`);
+            html.push(`<option value="${escapeHtml(supplierId)}">${escapeHtml(name)}</option>`);
         });
         select.innerHTML = html.join('');
         if (previous && select.querySelector(`option[value="${previous}"]`)) {

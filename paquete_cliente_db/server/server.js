@@ -25,6 +25,8 @@ const { applyInventoryDelta } = require('./inventory_core');
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
+// Detras de Nginx (mismo equipo): toma la IP real del cliente desde X-Forwarded-For.
+app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '1mb' }));
 
 const corsOrigins = config.corsOrigin === '*'
@@ -39,6 +41,30 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+const {
+  createRateLimiter,
+  clientIpKey,
+  rejectRateLimited,
+  allowRegistrationRequest,
+  createLoginGuard,
+  loginBlockedMessage,
+} = require('./rate_limiter');
+const ONE_HOUR_MS = 60 * 60 * 1000;
+// Intentos de login (reglas en rate_limiter.js: por IP, por cuenta + IP y por cuenta).
+const loginGuard = createLoginGuard();
+// Registro publico de equipos y cajas (pantalla previa al login).
+const addCajaIpLimiter = createRateLimiter({ max: 20, windowMs: ONE_HOUR_MS });
+const bindIpLimiter = createRateLimiter({ max: 120, windowMs: ONE_HOUR_MS });
+const addCajaGlobalLimiter = createRateLimiter({ max: 50, windowMs: ONE_HOUR_MS });
+const bindGlobalLimiter = createRateLimiter({ max: 600, windowMs: ONE_HOUR_MS });
+
+// Registra el error completo en el log del servidor y devuelve un texto generico para el
+// cliente: los 500 no deben mostrar SQL, rutas ni otros detalles internos.
+function logInternalError(err) {
+  console.error(err);
+  return 'Error interno del servidor';
+}
 
 const publicRoutes = [
   { method: 'POST', path: '/api/login' },
@@ -478,21 +504,36 @@ async function isAdminSiaUser(userId, executor = db) {
   return String(rows[0]?.user || '').trim().toLowerCase() === 'admin_sia';
 }
 
+// La cuenta admin_sia (soporte SIA) no aparece en listas ni puede tocarla otro usuario.
+const ADMIN_SIA_USERNAME = 'admin_sia';
+// Caja de uso exclusivo de admin_sia: oculta para los demas.
+const ADMIN_SIA_BOX_NUMBER = 8;
+
+function isAdminSiaUsername(value) {
+  return String(value || '').trim().toLowerCase() === ADMIN_SIA_USERNAME;
+}
+
+function isAdminSiaBox(cajaId) {
+  return Number(cajaId) === ADMIN_SIA_BOX_NUMBER;
+}
+
 async function requireAdministrator(req, res) {
   try {
     const userId = toInt(req.user?.sub);
     const [rows] = userId
-      ? await db.query('SELECT user, es_administrador FROM usuarios WHERE id = ? LIMIT 1', [userId])
+      ? await db.query('SELECT user, es_administrador, estado_usuario FROM usuarios WHERE id = ? LIMIT 1', [userId])
       : [[]];
     const row = rows[0];
-    if (row && (Number(row.es_administrador) === 1 || String(row.user || '').trim().toLowerCase() === 'admin_sia')) {
+    // Un administrador desactivado no puede seguir actuando aunque su sesion no haya vencido.
+    if (row && Number(row.estado_usuario ?? 1) === 1 && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
       return true;
     }
     const message = 'Solo un administrador puede realizar esta accion';
     res.status(403).json({ message, error: message });
     return false;
   } catch (_) {
-    res.status(500).json({ message: 'No se pudo validar el permiso administrativo' });
+    const failure = 'No se pudo validar el permiso administrativo';
+    res.status(500).json({ message: failure, error: failure });
     return false;
   }
 }
@@ -4013,7 +4054,7 @@ app.get('/api/productos', async (req, res) => {
     );
     res.json(results);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4063,7 +4104,7 @@ app.get('/api/getInfo', async (req, res) => {
     );
     res.json(results);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4079,13 +4120,16 @@ app.get('/api/getCajas', async (req, res) => {
        LEFT JOIN sucursales s ON s.id_sucursal = c.sucursal_id
        ORDER BY c.n_caja ASC`
     );
-    if (results.length > 0) {
-      res.json(results);
+    const visible = (await isAdminSiaUser(req.user?.sub))
+      ? results
+      : results.filter((row) => !isAdminSiaBox(row.n_caja));
+    if (visible.length > 0) {
+      res.json(visible);
     } else {
       res.json(0);
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4414,6 +4458,7 @@ app.get('/api/device-caja/resolve', async (req, res) => {
 });
 
 app.post('/api/device-caja/bind', async (req, res) => {
+  if (!allowRegistrationRequest(req, res, bindIpLimiter, bindGlobalLimiter)) return;
   const deviceHash = normalizeDeviceHash(req.body?.fingerprint);
   const cajaId = toInt(req.body?.numero_caja);
   const requestedName = typeof req.body?.nombre_caja === 'string' ? req.body.nombre_caja.trim() : '';
@@ -4421,6 +4466,9 @@ app.post('/api/device-caja/bind', async (req, res) => {
 
   if (!deviceHash || !isValidCajaNumber(cajaId)) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(409).json({ message: 'Numero de caja no disponible' });
   }
 
   try {
@@ -4449,9 +4497,10 @@ app.get('/api/usuarios', async (req, res) => {
     const [results] = await db.query(
       'SELECT id, nombre, user, estado_usuario, es_administrador FROM usuarios ORDER BY nombre ASC'
     );
-    return res.json(results);
+    const showAdminSia = await isAdminSiaUser(req.user?.sub);
+    return res.json(showAdminSia ? results : results.filter((row) => !isAdminSiaUsername(row.user)));
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4465,7 +4514,9 @@ app.get('/api/cajeros', async (req, res) => {
        LEFT JOIN cajero_permisos p ON p.usuario_id = u.id
        ORDER BY u.es_administrador DESC, u.nombre ASC, u.id ASC`
     );
-    const formatted = rows.map((row) => {
+    const showAdminSia = await isAdminSiaUser(req.user?.sub);
+    const visibleRows = showAdminSia ? rows : rows.filter((row) => !isAdminSiaUsername(row.user));
+    const formatted = visibleRows.map((row) => {
       const permissions = {};
       CASHIER_PERMISSION_FIELDS.forEach((field) => {
         permissions[field] = Number(row[field] || 0);
@@ -4481,7 +4532,7 @@ app.get('/api/cajeros', async (req, res) => {
     });
     return res.json(formatted);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -4496,6 +4547,9 @@ app.post('/api/cajeros', async (req, res) => {
 
   if (!username || !nombre || !plainPassword || plainPassword.length < 4) {
     return res.status(400).json({ error: 'Datos de cajero inválidos' });
+  }
+  if (isAdminSiaUsername(username)) {
+    return res.status(409).json({ error: 'Nombre de usuario no disponible' });
   }
 
   let connection;
@@ -4532,7 +4586,7 @@ app.post('/api/cajeros', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   } finally {
     if (connection) connection.release();
   }
@@ -4557,10 +4611,20 @@ app.put('/api/cajeros/:id', async (req, res) => {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    const [existsRows] = await connection.query('SELECT id FROM usuarios WHERE id = ? LIMIT 1', [userId]);
-    if (!existsRows.length) {
+    const [existsRows] = await connection.query('SELECT id, user FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+    const targetIsAdminSia = existsRows.length > 0 && isAdminSiaUsername(existsRows[0].user);
+    const requesterIsAdminSia = await isAdminSiaUser(req.user?.sub, connection);
+    if (!existsRows.length || (targetIsAdminSia && !requesterIsAdminSia)) {
       await connection.rollback();
       return res.status(404).json({ error: 'Cajero no encontrado' });
+    }
+    if (targetIsAdminSia && (!isAdminSiaUsername(username) || !estadoUsuario || !esAdministrador)) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'La cuenta admin_sia debe conservar su usuario, estar activa y ser administrador' });
+    }
+    if (!targetIsAdminSia && isAdminSiaUsername(username)) {
+      await connection.rollback();
+      return res.status(409).json({ error: 'Nombre de usuario no disponible' });
     }
 
     const [dupRows] = await connection.query('SELECT id FROM usuarios WHERE LOWER(user) = LOWER(?) AND id <> ? LIMIT 1', [username, userId]);
@@ -4607,7 +4671,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   } finally {
     if (connection) connection.release();
   }
@@ -4624,6 +4688,14 @@ app.delete('/api/cajeros/:id', async (req, res) => {
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
+    const [targetRows] = await connection.query('SELECT user FROM usuarios WHERE id = ? LIMIT 1', [userId]);
+    if (targetRows.length && isAdminSiaUsername(targetRows[0].user)) {
+      await connection.rollback();
+      const requesterIsAdminSia = await isAdminSiaUser(req.user?.sub);
+      return requesterIsAdminSia
+        ? res.status(400).json({ error: 'La cuenta admin_sia no se puede eliminar' })
+        : res.status(404).json({ error: 'Cajero no encontrado' });
+    }
     await connection.query('DELETE FROM cajero_permisos WHERE usuario_id = ?', [userId]);
     const [result] = await connection.query('DELETE FROM usuarios WHERE id = ?', [userId]);
     if (!result.affectedRows) {
@@ -4636,7 +4708,7 @@ app.delete('/api/cajeros/:id', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   } finally {
     if (connection) connection.release();
   }
@@ -6646,7 +6718,7 @@ app.get('/api/productos/search', async (req, res) => {
     );
     return res.json(results);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: logInternalError(err) });
   }
 });
 
@@ -12073,7 +12145,7 @@ app.post('/api/corte/cerrar', async (req, res) => {
     });
     return res.json(result);
   } catch (error) {
-    return res.status(Number(error.status || 500)).json({ message: error.message || 'Error interno del servidor' });
+    return res.status(Number(error.status || 500)).json({ message: error.status ? (error.message || 'Error interno del servidor') : logInternalError(error) });
   }
 
   try {
@@ -12495,7 +12567,7 @@ app.post('/api/restricted-session/close-shift', async (req, res) => {
     return res.json(result);
   } catch (error) {
     try { await connection.rollback(); } catch (_) {}
-    return res.status(Number(error.status || 500)).json({ message: error.message || 'No se pudo cerrar la caja' });
+    return res.status(Number(error.status || 500)).json({ message: error.status ? (error.message || 'No se pudo cerrar la caja') : logInternalError(error) });
   } finally {
     connection.release();
   }
@@ -12513,6 +12585,14 @@ app.post('/api/login', async (req, res) => {
 
   if (!usernameInput || !passwordInput) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
+  }
+
+  // El intento se cuenta antes de esperar a la base de datos, para que pedidos simultaneos
+  // no puedan saltarse el limite.
+  const loginIp = clientIpKey(req);
+  const ipAttempt = loginGuard.beginAttempt(loginIp);
+  if (!ipAttempt.ok) {
+    return rejectRateLimited(res, ipAttempt.retryMs, loginBlockedMessage(ipAttempt.retryMs));
   }
 
   try {
@@ -12533,6 +12613,11 @@ app.post('/api/login', async (req, res) => {
     }
 
     const user = rows[0];
+    // Limite por cuenta (id real, no el texto escrito), antes de comparar la clave.
+    const accountAttempt = loginGuard.checkAccount(user.id, loginIp);
+    if (!accountAttempt.ok) {
+      return rejectRateLimited(res, accountAttempt.retryMs, loginBlockedMessage(accountAttempt.retryMs));
+    }
     const storedPassword = user.contrasena || '';
     let passwordOk = false;
     let upgradeHash = false;
@@ -12546,6 +12631,11 @@ app.post('/api/login', async (req, res) => {
 
     if (!passwordOk) {
       return res.status(401).json({ message: 'Credenciales invalidas' });
+    }
+    loginGuard.success(user.id, loginIp);
+
+    if (isAdminSiaBox(cajaId) && !isAdminSiaUsername(user.user)) {
+      return res.status(400).json({ message: `Caja ${cajaId} no registrada.` });
     }
 
     let reservation = null;
@@ -13384,9 +13474,11 @@ app.post('/api/sales', async (req, res) => {
 // ---------------almacena la informacion del local con los permisos para el sistema
 app.post('/api/addInfo', async (req, res) => {
   // Ruta publica solo para la configuracion inicial (ver server/server.js).
+  let isInitialSetup = false;
   try {
     const [infoRows] = await db.query('SELECT COUNT(*) AS total FROM info');
-    if (Number(infoRows[0]?.total || 0) > 0 && !(await requireAdministrator(req, res))) return;
+    isInitialSetup = Number(infoRows[0]?.total || 0) === 0;
+    if (!isInitialSetup && !(await requireAdministrator(req, res))) return;
   } catch (err) {
     console.error('No se pudo validar la configuracion inicial:', err);
     return res.status(500).json({ error: 'No se pudo validar la configuracion del negocio' });
@@ -13436,7 +13528,11 @@ app.post('/api/addInfo', async (req, res) => {
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
-    await connection.query('DELETE FROM info');
+    // En la configuracion inicial no se borra: si dos pedidos llegan a la vez, el segundo
+    // choca con la clave primaria id_info = 1 y se rechaza en vez de pisar al primero.
+    if (!isInitialSetup) {
+      await connection.query('DELETE FROM info');
+    }
     await connection.query(
       `INSERT INTO info (
         id_info, nombre, telefono, mail, tipo_local, inventario, credito,
@@ -13468,6 +13564,9 @@ app.post('/api/addInfo', async (req, res) => {
     if (connection) {
       try { await connection.rollback(); } catch (_) {}
     }
+    if (isInitialSetup && err?.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'El negocio ya fue configurado. Inicia sesion para modificarlo.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Error al registrar la informacion del local' });
   } finally {
@@ -13477,6 +13576,7 @@ app.post('/api/addInfo', async (req, res) => {
 
 // ---------------almacena el munero de la caja y su estado activada/desactivada
 app.post('/api/addCaja', async (req, res) => {
+  if (!allowRegistrationRequest(req, res, addCajaIpLimiter, addCajaGlobalLimiter)) return;
   const { numero_caja, nombre_caja, estado, fingerprint } = req.body;
   const cajaId = toInt(numero_caja);
   const cajaName = toText(nombre_caja, 120);
@@ -13486,6 +13586,9 @@ app.post('/api/addCaja', async (req, res) => {
 
   if (!isValidCajaNumber(cajaId) || !cajaName || boxState === null) {
     return res.status(400).json({ error: 'Datos incompletos o invalidos' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(409).json({ error: 'Numero de caja no disponible' });
   }
 
   try {
@@ -13532,6 +13635,9 @@ app.post('/api/cajas/upsert', async (req, res) => {
 
   if (!isValidCajaNumber(cajaId) || !cajaName || boxState === null) {
     return res.status(400).json({ error: 'Datos de caja incompletos o invalidos' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(409).json({ error: 'Numero de caja no disponible' });
   }
 
   let connection;
@@ -13627,6 +13733,9 @@ app.delete('/api/cajas/:numero', async (req, res) => {
   const cajaId = toInt(req.params?.numero);
   if (!isValidCajaNumber(cajaId)) {
     return res.status(400).json({ error: 'Numero de caja invalido' });
+  }
+  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
+    return res.status(404).json({ error: 'Caja no encontrada' });
   }
 
   let connection;
@@ -13879,7 +13988,7 @@ app.put('/api/updateUser/', async (req, res) => {
     );
     res.json({ message: 'estado del usuario actualizado' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: logInternalError(err) });
   }
 });
 

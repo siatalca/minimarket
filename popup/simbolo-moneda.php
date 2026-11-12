@@ -7,7 +7,7 @@
     <title>Simbolo de moneda</title>
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
-    <script src="../js/functions.js?v=20261003c"></script>
+    <script src="../js/functions.js?v=20261112a"></script>
     <style>
         .money-shell { max-width: 760px; margin: 0 auto; }
         .money-card {
