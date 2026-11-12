@@ -10259,19 +10259,6 @@ async function saveInventoryChanges() {
     }
 
     const newQty = stockCurrent + restockQty;
-    const payload = {
-        descripcion: normalizeText(selectedInventoryProduct.descripcion || ''),
-        formato_venta: normalizeText(selectedInventoryProduct.formato_venta || 'unidad'),
-        precio_venta: salePrice,
-        costo: cost,
-        ganancia: profit,
-        cantidad_actual: newQty,
-        cantidad_minima: minStock,
-        cantidad_maxima: maxStock,
-        utiliza_inventario: 1,
-        departamento: normalizeText(selectedInventoryProduct.departamento || ''),
-        supplier_id: toPositiveIntOrNull(selectedInventoryProduct.supplier_id),
-    };
 
     try {
         const response = await fetch(API_URL + `api/productos/${encodeURIComponent(code)}/inventory`, {
@@ -10280,7 +10267,9 @@ async function saveInventoryChanges() {
                 'Content-Type': 'application/json',
             }),
             body: JSON.stringify({
-                cantidad_actual: newQty,
+                // Se envia solo la diferencia: el servidor la suma a la existencia real,
+                // para no pisar ventas o ajustes hechos mientras esta pantalla estaba abierta.
+                cantidad_delta: restockQty,
                 cantidad_minima: minStock,
                 cantidad_maxima: maxStock,
                 utiliza_inventario: 1,
@@ -10302,7 +10291,8 @@ async function saveInventoryChanges() {
 
         clearInventoryProductDetails();
         setInventoryNewScanInputLocked(false, { clear: true, focus: true });
-        setInventoryFeedback(`Cambios guardados. Nuevo stock: ${Number(newQty).toFixed(0)}.`, 'ok');
+        const savedQty = Number.isFinite(Number(data.cantidad_actual)) ? Number(data.cantidad_actual) : newQty;
+        setInventoryFeedback(`Cambios guardados. Nuevo stock: ${formatInventoryQtyValue(savedQty)}.`, 'ok');
     } catch (error) {
         console.error('Error saveInventoryChanges:', error);
         setInventoryFeedback('Error de conexion al actualizar inventario.', 'error');
@@ -10353,7 +10343,7 @@ async function saveInventoryAdjustChanges() {
                 'Content-Type': 'application/json',
             }),
             body: JSON.stringify({
-                cantidad_actual: newQty,
+                cantidad_delta: adjustQty,
                 costo: cost,
                 ganancia: profit,
                 precio_venta: salePrice,
@@ -10370,7 +10360,8 @@ async function saveInventoryAdjustChanges() {
 
         clearInventoryAdjustProductDetails();
         setInventoryAdjustScanInputLocked(false, { clear: true, focus: true });
-        setInventoryAdjustFeedback(`Ajuste guardado. Nuevo stock: ${Number(newQty).toFixed(0)}.`, 'ok');
+        const savedQty = Number.isFinite(Number(data.cantidad_actual)) ? Number(data.cantidad_actual) : newQty;
+        setInventoryAdjustFeedback(`Ajuste guardado. Nuevo stock: ${formatInventoryQtyValue(savedQty)}.`, 'ok');
     } catch (error) {
         console.error('Error saveInventoryAdjustChanges:', error);
         setInventoryAdjustFeedback('Error de conexion al ajustar inventario.', 'error');

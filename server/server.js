@@ -21,6 +21,7 @@ const {
   RestrictedCloseReplayGuard,
 } = require('./session_reservation_policy');
 const { closeShiftCore } = require('./shift_close_core');
+const { applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, roundQty } = require('./inventory_core');
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
@@ -4598,6 +4599,21 @@ async function bootstrapDatabase() {
   await ensureOperationalTables();
   await ensureInfoOwnerColumns();
   await ensureBoxLimitColumn();
+  await ensureSaleDetailStockColumn();
+}
+
+// Marca si cada linea de venta desconto stock, para que la anulacion devuelva exactamente
+// lo descontado aunque despues cambie "utiliza_inventario" del producto.
+async function ensureSaleDetailStockColumn() {
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'detalle_venta' AND COLUMN_NAME = 'stock_descontado'`,
+    [config.db.database]
+  );
+  if (!rows.length) {
+    await db.query('ALTER TABLE detalle_venta ADD COLUMN stock_descontado TINYINT(1) NULL');
+  }
 }
 
 function startApiServer() {
@@ -11764,7 +11780,10 @@ app.post('/api/sales/:saleId/cancel', async (req, res) => {
               COALESCE(d.cantidad, 0) AS cantidad,
               COALESCE(d.precio_unitario, 0) AS precio_unitario,
               COALESCE(d.subtotal, 0) AS subtotal,
-              COALESCE(p.utiliza_inventario, 0) AS utiliza_inventario
+              COALESCE(p.utiliza_inventario, 0) AS utiliza_inventario,
+              d.stock_descontado,
+              p.codigo_barras AS producto_codigo,
+              p.descripcion AS producto_nombre
        FROM detalle_venta d
        LEFT JOIN productos p ON p.id_producto = d.producto_id
        WHERE d.venta_id = ?
@@ -11772,19 +11791,23 @@ app.post('/api/sales/:saleId/cancel', async (req, res) => {
        FOR UPDATE`,
       [saleId]
     );
-    const restoreByProduct = new Map();
-    for (const item of itemRows) {
-      const productId = Number(item.producto_id || 0);
-      const quantity = Number(item.cantidad || 0);
-      if (productId > 0 && Number(item.utiliza_inventario || 0) === 1 && Number.isFinite(quantity) && quantity > 0) {
-        restoreByProduct.set(productId, Number(restoreByProduct.get(productId) || 0) + quantity);
-      }
-    }
-    for (const [productId, quantity] of restoreByProduct.entries()) {
+    const restoreByProduct = computeCancellationRestock(itemRows);
+    for (const [productId, entry] of restoreByProduct.entries()) {
+      const [stockRows] = await connection.query(
+        'SELECT cantidad_actual FROM productos WHERE id_producto = ? FOR UPDATE',
+        [productId]
+      );
+      if (!stockRows.length) continue;
+      const before = roundQty(stockRows[0].cantidad_actual);
       await connection.query(
         'UPDATE productos SET cantidad_actual = cantidad_actual + ? WHERE id_producto = ?',
-        [quantity, productId]
+        [entry.quantity, productId]
       );
+      await recordInventoryMovement(connection, {
+        productId, code: entry.code, description: entry.name, type: 'modificacion',
+        previousQty: before, delta: entry.quantity, newQty: before + entry.quantity,
+        note: `Devolucion por anulacion de venta ${saleId}`, cajaId: toInt(sale.caja_id), userId: authUserId,
+      });
     }
 
     const payments = await fetchSalePaymentAllocations(connection, saleId, sale);
@@ -14798,12 +14821,13 @@ app.post('/api/sales', async (req, res) => {
         ? `${item.productDescription || ''} (${item.promoLabel})`.trim()
         : null;
 
+      const discountsStock = Boolean(record.utiliza_inventario);
       await connection.query(
-        'INSERT INTO detalle_venta (venta_id, producto_id, cantidad, precio_unitario, subtotal, descripcion) VALUES (?, ?, ?, ?, ?, ?)',
-        [ventaId, item.id, item.qty, adjustedUnitPrice, adjustedSubtotal, detailDescription]
+        'INSERT INTO detalle_venta (venta_id, producto_id, cantidad, precio_unitario, subtotal, descripcion, stock_descontado) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [ventaId, item.id, item.qty, adjustedUnitPrice, adjustedSubtotal, detailDescription, discountsStock ? 1 : 0]
       );
 
-      if (record.utiliza_inventario) {
+      if (discountsStock) {
         const [updateResult] = await connection.query(
           'UPDATE productos SET cantidad_actual = cantidad_actual - ? WHERE id_producto = ? AND cantidad_actual >= ?',
           [item.qty, item.id, item.qty]
@@ -15210,7 +15234,10 @@ app.delete('/api/cajas/:numero', async (req, res) => {
 app.put('/api/productos/:code/inventory', async (req, res) => {
   const { code } = req.params;
   const body = req.body || {};
-  const qty = toNumber(body.cantidad_actual);
+  // La pantalla envia la DIFERENCIA (cantidad_delta), no el total: el total se calcula aqui sobre
+  // la existencia real bloqueada, asi una venta o un ajuste simultaneo nunca se sobrescribe.
+  const hasDelta = body.cantidad_delta !== undefined && body.cantidad_delta !== null && body.cantidad_delta !== '';
+  const delta = hasDelta ? toNumber(body.cantidad_delta) : null;
   const minQty = toNumber(body.cantidad_minima);
   const maxQty = toNumber(body.cantidad_maxima);
   const useInventory = toBool(body.utiliza_inventario);
@@ -15225,7 +15252,13 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
   const requestedCajaId = toInt(body.caja_id);
   const authUserId = toInt(req.user?.sub) || null;
 
-  if (qty === null || qty < 0) {
+  if (!hasDelta) {
+    return res.status(409).json({
+      error: 'La pantalla de inventario esta desactualizada. Recarga la pagina (Ctrl+F5) e intenta de nuevo.',
+      code: 'INVENTORY_DELTA_REQUIRED',
+    });
+  }
+  if (delta === null || !Number.isFinite(delta)) {
     return res.status(400).json({ error: 'Cantidad invalida' });
   }
   if (minQty !== null && minQty < 0) {
@@ -15238,111 +15271,56 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
     return res.status(400).json({ error: 'Stock minimo no puede ser mayor al maximo' });
   }
 
+  let connection;
+  let result;
   try {
-    const [rows] = await db.query(
-      `SELECT id_producto, codigo_barras, descripcion, cantidad_actual, costo, precio_venta
-       FROM productos
-       WHERE codigo_barras = ?
-       LIMIT 1`,
-      [code]
-    );
-    if (!rows.length) {
-      return res.status(404).json({ error: 'Producto no encontrado' });
-    }
-    const product = rows[0];
-    const previousQty = Number(product.cantidad_actual || 0);
-    const safePreviousQty = Number.isFinite(previousQty) ? previousQty : 0;
-    const safeNewQty = Number.isFinite(qty) ? Number(qty.toFixed(3)) : 0;
-
-    const updates = ['cantidad_actual = ?'];
-    const params = [qty];
-
-    if (minQty !== null) {
-      updates.push('cantidad_minima = ?');
-      params.push(minQty);
-    }
-    if (maxQty !== null) {
-      updates.push('cantidad_maxima = ?');
-      params.push(maxQty);
-    }
-    if (useInventory !== null) {
-      updates.push('utiliza_inventario = ?');
-      params.push(useInventory ? 1 : 0);
-    }
-    if (cost !== null) {
-      updates.push('costo = ?');
-      params.push(cost);
-    }
-    if (salePrice !== null) {
-      updates.push('precio_venta = ?');
-      params.push(salePrice);
-    }
-    if (profit !== null) {
-      updates.push('ganancia = ?');
-      params.push(profit);
-    }
-
-    params.push(code);
-    await db.query(
-      `UPDATE productos SET ${updates.join(', ')} WHERE codigo_barras = ?`,
-      params
-    );
-
-    const qtyDelta = Number((safeNewQty - safePreviousQty).toFixed(3));
-    const movementType = movementTypeInput || (qtyDelta < 0 ? 'ajuste' : 'modificacion');
-    let movementLogged = false;
-    try {
-      const resolvedCajaId = requestedCajaId && requestedCajaId > 0
-        ? requestedCajaId
-        : await resolveCurrentCajaIdForUser(authUserId, db);
-      await db.query(
-        `INSERT INTO inventory_movements (
-          fecha, producto_id, codigo_barras, producto_descripcion, tipo_movimiento,
-          cantidad_anterior, cambio_cantidad, cantidad_nueva, especificacion, caja_id, usuario_id
-        ) VALUES (
-          NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        )`,
-        [
-          Number(product.id_producto || 0),
-          String(product.codigo_barras || code),
-          String(product.descripcion || ''),
-          movementType,
-          safePreviousQty,
-          qtyDelta,
-          safeNewQty,
-          movementNote,
-          resolvedCajaId,
-          authUserId,
-        ]
-      );
-      movementLogged = true;
-    } catch (movementError) {
-      console.error('No se pudo registrar movimiento de inventario:', movementError);
-    }
-
-    if (movementType === 'ajuste' && qtyDelta !== 0) {
-      try {
-        await sendInventoryAdjustmentEmail({
-          codigo_barras: String(product.codigo_barras || code),
-          descripcion: String(product.descripcion || ''),
-          cantidad_anterior: safePreviousQty,
-          cambio_cantidad: qtyDelta,
-          cantidad_nueva: safeNewQty,
-          especificacion: movementNote,
-        }, req.user?.name);
-      } catch (notificationError) {
-        console.error('No se pudo enviar aviso de ajuste de inventario:', notificationError);
-      }
-    }
-
-    return res.json({
-      message: 'Inventario actualizado correctamente',
-      movement_logged: movementLogged,
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    const resolvedCajaId = requestedCajaId && requestedCajaId > 0
+      ? requestedCajaId
+      : await resolveCurrentCajaIdForUser(authUserId, connection);
+    result = await applyInventoryDelta({
+      connection, code, delta,
+      fields: { minQty, maxQty, useInventory, cost, salePrice, profit },
+      movementType: movementTypeInput, movementNote, cajaId: resolvedCajaId, userId: authUserId,
     });
+    await connection.commit();
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Base de datos error' });
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message, code: err.code, cantidad_actual: err.cantidad_actual });
+    }
+    console.error('Error al actualizar inventario:', err);
+    return res.status(500).json({ error: 'No se pudo actualizar el inventario' });
+  } finally {
+    if (connection) connection.release();
   }
+
+  const { product, previousQty, qtyDelta, newQty, movementType, movementLogged } = result;
+  if (movementType === 'ajuste' && qtyDelta !== 0) {
+    try {
+      await sendInventoryAdjustmentEmail({
+        codigo_barras: String(product.codigo_barras || code),
+        descripcion: String(product.descripcion || ''),
+        cantidad_anterior: previousQty,
+        cambio_cantidad: qtyDelta,
+        cantidad_nueva: newQty,
+        especificacion: movementNote,
+      }, req.user?.name);
+    } catch (notificationError) {
+      console.error('No se pudo enviar aviso de ajuste de inventario:', notificationError);
+    }
+  }
+
+  return res.json({
+    message: 'Inventario actualizado correctamente',
+    movement_logged: movementLogged,
+    cantidad_anterior: previousQty,
+    cambio_cantidad: qtyDelta,
+    cantidad_actual: newQty,
+  });
 });
 
 // actualiza producto por codigo de barras
@@ -15355,9 +15333,9 @@ app.put('/api/productos/:code', async (req, res) => {
   const salePrice = toNumber(body.precio_venta);
   const cost = toNumber(body.costo);
   const profit = roundToDecimals(body.ganancia ?? 0, 2);
-  const qty = toNumber(body.cantidad_actual ?? 0);
-  const minQty = toNumber(body.cantidad_minima ?? 0);
-  const maxQty = toNumber(body.cantidad_maxima ?? 0);
+  // La existencia y los minimos/maximos solo cambian por inventario, ventas, anulaciones,
+  // recepcion de compras o importacion. Esta ruta ignora esos campos para no pisar el stock
+  // con el valor que tenia la pantalla al cargar el producto.
   const useInventory = toBool(body.utiliza_inventario);
   const departmentName = toText(body.departamento, 80);
   const supplierId = body.supplier_id === null || typeof body.supplier_id === 'undefined'
@@ -15365,10 +15343,10 @@ app.put('/api/productos/:code', async (req, res) => {
     : toInt(body.supplier_id);
   const taxExempt = toBool(body.exento_iva);
 
-  if (!newBarcode || !description || !formatName || salePrice === null || cost === null || profit === null || qty === null || minQty === null || maxQty === null || useInventory === null || taxExempt === null || !departmentName) {
+  if (!newBarcode || !description || !formatName || salePrice === null || cost === null || profit === null || useInventory === null || taxExempt === null || !departmentName) {
     return res.status(400).json({ error: 'Datos incompletos o invalidos' });
   }
-  if ([salePrice, cost, profit, qty, minQty, maxQty].some((value) => value < 0)) {
+  if ([salePrice, cost, profit].some((value) => value < 0)) {
     return res.status(400).json({ error: 'No se permiten valores negativos' });
   }
   if (supplierId !== null && (!supplierId || supplierId < 1)) {
@@ -15408,7 +15386,7 @@ app.put('/api/productos/:code', async (req, res) => {
     const [result] = await db.query(
       `UPDATE productos
            SET codigo_barras = ?, descripcion = ?, id_formato = ?, precio_venta = ?, costo = ?, ganancia = ?,
-           cantidad_actual = ?, cantidad_minima = ?, cantidad_maxima = ?, utiliza_inventario = ?,
+           utiliza_inventario = ?,
            id_departamento = ?, supplier_id = ?, exento_iva = ?
        WHERE codigo_barras = ?`,
       [
@@ -15418,9 +15396,6 @@ app.put('/api/productos/:code', async (req, res) => {
         salePrice,
         cost,
         profit,
-        qty,
-        minQty,
-        maxQty,
         useInventory ? 1 : 0,
         departmentRows[0].id_departamento,
         supplierId,

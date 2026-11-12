@@ -11,6 +11,9 @@ Archivos incluidos:
 - server/config.js
 - server/db.js
 - server/local_print_bridge.js
+- server/inventory_core.js
+- server/session_reservation_policy.js
+- server/shift_close_core.js
 - server/package.json
 - server/package-lock.json
 - server/.env.example
