@@ -64,11 +64,21 @@ for (const file of BACKENDS) {
     assert.match(body, /Number\(row\.estado_usuario \?\? 1\) === 1/);
   });
 
-  test(`${label}: la configuracion inicial no borra datos y rechaza la segunda`, () => {
+  test(`${label}: addInfo nunca borra la fila del negocio`, () => {
     const start = source.indexOf("app.post('/api/addInfo'");
     const handler = source.slice(start, source.indexOf("app.post('/api/addCaja'", start));
-    assert.match(handler, /if \(!isInitialSetup\) \{\s*await connection\.query\('DELETE FROM info'\);/);
+    assert.doesNotMatch(handler, /DELETE FROM info/);
+    // Configuracion inicial: crea la fila 1 y rechaza la segunda configuracion simultanea.
+    assert.match(handler, /if \(isInitialSetup\) \{\s*await connection\.query\(\s*`INSERT INTO info/);
     assert.match(handler, /isInitialSetup && err\?\.code === 'ER_DUP_ENTRY'/);
+  });
+
+  test(`${label}: guardar Opciones habilitadas conserva direccion y datos del dueno`, () => {
+    const start = source.indexOf("app.post('/api/addInfo'");
+    const handler = source.slice(start, source.indexOf("app.post('/api/addCaja'", start));
+    const update = handler.slice(handler.indexOf('UPDATE info'), handler.indexOf('WHERE id_info = ?'));
+    assert.ok(update.length > 0, 'debe actualizar la fila existente');
+    assert.doesNotMatch(update, /direccion|dueno_/);
   });
 
   test(`${label}: login y registro publico tienen limite de intentos`, () => {

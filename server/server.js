@@ -15012,36 +15012,37 @@ app.post('/api/addInfo', async (req, res) => {
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
-    // En la configuracion inicial no se borra: si dos pedidos llegan a la vez, el segundo
-    // choca con la clave primaria id_info = 1 y se rechaza en vez de pisar al primero.
-    if (!isInitialSetup) {
-      await connection.query('DELETE FROM info');
+    // Configuracion inicial: si dos pedidos llegan a la vez, el segundo choca con la clave
+    // primaria id_info = 1 y se rechaza en vez de pisar al primero.
+    const values = [
+      nombre, telefono, mail, tipo, inv, cred, prodCommon,
+      marginEnabled, marginAmount, rounding, roundingAmount, msgEnabled, msgData, msgTime,
+    ];
+    if (isInitialSetup) {
+      await connection.query(
+        `INSERT INTO info (
+          id_info, nombre, telefono, mail, tipo_local, inventario, credito,
+          producto_comun, margen_ganancia, monto_ganancia, redondeo, monto_redondeo,
+          mensaje, data_mensaje, time_mensaje
+        )
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        values
+      );
+    } else {
+      // Se actualizan solo los campos de esta ventana sobre la fila existente. Antes se borraba
+      // y recreaba la fila, y se perdian la direccion y los datos del dueno (Datos del negocio).
+      const [current] = await connection.query(
+        'SELECT id_info FROM info ORDER BY (id_info = 1) DESC, id_info ASC LIMIT 1 FOR UPDATE'
+      );
+      await connection.query(
+        `UPDATE info
+         SET id_info = 1, nombre = ?, telefono = ?, mail = ?, tipo_local = ?, inventario = ?, credito = ?,
+             producto_comun = ?, margen_ganancia = ?, monto_ganancia = ?, redondeo = ?, monto_redondeo = ?,
+             mensaje = ?, data_mensaje = ?, time_mensaje = ?
+         WHERE id_info = ?`,
+        [...values, Number(current[0].id_info)]
+      );
     }
-    await connection.query(
-      `INSERT INTO info (
-        id_info, nombre, telefono, mail, tipo_local, inventario, credito,
-        producto_comun, margen_ganancia, monto_ganancia, redondeo, monto_redondeo,
-        mensaje, data_mensaje, time_mensaje
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        1,
-        nombre,
-        telefono,
-        mail,
-        tipo,
-        inv,
-        cred,
-        prodCommon,
-        marginEnabled,
-        marginAmount,
-        rounding,
-        roundingAmount,
-        msgEnabled,
-        msgData,
-        msgTime,
-      ]
-    );
     await connection.commit();
     res.json({ success: true });
   } catch (err) {
