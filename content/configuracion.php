@@ -31,11 +31,11 @@
             <h3 class="sub">General</h3>
             <ul class="panel-grid">
                 <!-- (items originales) -->
-                <li class="panel-item" onclick="open_w('opciones-Habilitadas')">
+                <li class="panel-item" data-admin-only="1" onclick="open_w('opciones-Habilitadas')">
                     <img src="https://cdn-icons-gif.flaticon.com/10690/10690746.gif" alt="">
                     <span>Opciones<br>Habilitadas</span>
                 </li>
-                <li class="panel-item" onclick="open_w('cajero')">
+                <li class="panel-item" data-admin-only="1" onclick="open_w('cajero')">
                     <img src="https://cdn-icons-gif.flaticon.com/11188/11188712.gif" alt="">
                     <span>Cajeros</span>
                 </li>
@@ -51,7 +51,7 @@
                     <img src="https://cdn-icons-gif.flaticon.com/15309/15309792.gif" alt="">
                     <span>Modificar<br>folios</span>
                 </li>
-                <li class="panel-item" onclick="open_w('administrar-caja')">
+                <li class="panel-item" data-admin-only="1" onclick="open_w('administrar-caja')">
                     <img src="https://cdn-icons-gif.flaticon.com/11188/11188712.gif" alt="">
                     <span>Administrar<br>cajas</span>
                 </li>

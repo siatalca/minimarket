@@ -111,6 +111,7 @@
                     <option value="ajuste">Ajustes</option>
                     <option value="venta">Salidas de productos (ventas)</option>
                     <option value="modificacion">Ingreso de mercader&iacute;a (modificaci&oacute;n)</option>
+                    <option value="anulacion">Devoluciones por anulaci&oacute;n</option>
                     <option value="top_sold">Productos m&aacute;s vendidos</option>
                 </select>
             </div>

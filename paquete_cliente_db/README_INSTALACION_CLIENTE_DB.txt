@@ -14,6 +14,8 @@ Archivos incluidos:
 - server/inventory_core.js
 - server/session_reservation_policy.js
 - server/shift_close_core.js
+- server/rate_limiter.js
+- server/user_status.js
 - server/package.json
 - server/package-lock.json
 - server/.env.example

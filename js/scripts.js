@@ -9896,6 +9896,7 @@ function normalizeInventoryMovementTypeLabel(value) {
     if (type === 'venta') return 'Salida por venta';
     if (type === 'modificacion') return 'Ingreso (modificacion)';
     if (type === 'ajuste') return 'Ajuste';
+    if (type === 'anulacion') return 'Devolucion por anulacion';
     if (type === 'top_sold') return 'Producto mas vendido';
     if (!type) return 'Ajuste';
     return type.charAt(0).toUpperCase() + type.slice(1);
@@ -10774,6 +10775,8 @@ async function addCajaConnected() {
         fingerprint: fingerprint || null,
     };
     //console.log(connectedData);
+    // Devuelve { ok, message } para que quien llama pueda avisar si el servidor rechazo la caja
+    // (limite de cajas activas, numero no disponible, demasiados intentos, etc.).
     try{
         const response = await fetch(API_URL+'api/addCaja', {
             method: 'POST',
@@ -10784,8 +10787,12 @@ async function addCajaConnected() {
             },
             body: JSON.stringify(connectedData)
         });
+        if (response.ok) return { ok: true, message: '' };
+        const data = await response.json().catch(() => ({}));
+        return { ok: false, message: data.error || data.message || 'No se pudo registrar la caja en el servidor.' };
     }catch (error){
-    console.error("Error al crear la sesion: ", error);
+        console.error("Error al crear la sesion: ", error);
+        return { ok: false, message: 'No se pudo conectar con el servidor para registrar la caja.' };
     }
 }
 
@@ -11133,15 +11140,6 @@ async function downloadReportChartDetail(chartName) {
         console.error('Error exporting chart detail csv:', error);
         alert(error.message || 'Error al descargar detalle del grafico');
     }
-}
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
 }
 
 async function getBusinessDisplayInfo() {
@@ -12737,6 +12735,12 @@ function applyAdminSiaOnlyProductsActionsVisibility() {
     const canView = isSessionAdminSiaUser();
     document.querySelectorAll('[data-admin-sia-only="1"]').forEach((control) => {
         control.classList.toggle('hidden', !canView);
+    });
+    // Opciones que el servidor solo permite guardar a administradores (Cajeros, Administrar caja,
+    // Opciones habilitadas): se ocultan a los demas en vez de fallar al guardar.
+    const isAdmin = canView || Number(localStorage.getItem('user_is_admin') || 0) === 1;
+    document.querySelectorAll('[data-admin-only="1"]').forEach((control) => {
+        control.classList.toggle('hidden', !isAdmin);
     });
 }
 

@@ -60,8 +60,9 @@ for (const file of BACKENDS) {
   test(`${label}: un administrador desactivado no pasa la validacion`, () => {
     const start = source.indexOf('async function requireAdministrator(');
     const body = source.slice(start, source.indexOf('\n}', start));
-    assert.match(body, /estado_usuario/);
-    assert.match(body, /Number\(row\.estado_usuario \?\? 1\) === 1/);
+    assert.match(body, /SELECT user, es_administrador, activo FROM usuarios/);
+    assert.match(body, /if \(isUserActive\(row\) && \(/);
+    assert.doesNotMatch(body, /estado_usuario/, 'el "conectado" no decide permisos');
   });
 
   test(`${label}: addInfo nunca borra la fila del negocio`, () => {
@@ -106,3 +107,50 @@ for (const file of BACKENDS) {
     assert.doesNotMatch(source, /status\(500\)\.json\(\{ (error|message): (err|error)\.message/);
   });
 }
+
+for (const file of BACKENDS) {
+  const label = path.relative(path.join(__dirname, '..'), file);
+  const source = fs.readFileSync(file, 'utf8');
+
+  test(`${label}: un usuario desactivado no inicia sesion ni renueva la sesion`, () => {
+    assert.match(source, /u\.es_administrador, u\.activo,/);
+    assert.match(source, /if \(!isUserActive\(user\)\) \{/);
+    assert.match(source, /'SELECT id, nombre, activo FROM usuarios WHERE id = \? LIMIT 1'/);
+    assert.match(source, /if \(!isUserActive\(userRows\[0\]\)\) \{/);
+    assert.match(source, /async function ensureUserActiveColumn\(\)/);
+  });
+
+  test(`${label}: la ventana Cajeros escribe "activo", no el "conectado"`, () => {
+    assert.match(source, /const activo = normalizeBool\(req\.body\?\.activo \?\? req\.body\?\.estado_usuario, true\)/);
+    assert.match(source, /INSERT INTO usuarios \(user, nombre, contrasena, estado_usuario, activo, es_administrador\) VALUES \(\?, \?, \?, 0, \?, \?\)/);
+    assert.doesNotMatch(source, /UPDATE usuarios SET user = \?, nombre = \?(, contrasena = \?)?, estado_usuario = \?/);
+  });
+
+  test(`${label}: todas las lecturas de info usan el mismo criterio`, () => {
+    assert.doesNotMatch(source, /FROM info\s+ORDER BY id_info DESC/);
+    assert.doesNotMatch(source, /SELECT[^`']*FROM info\s+WHERE id_info = 1/);
+  });
+
+  test(`${label}: recepcion de compras e importacion registran el movimiento`, () => {
+    const receive = source.slice(source.indexOf("app.post('/api/purchase-order/receive'"));
+    const receiveHandler = receive.slice(0, receive.indexOf('\napp.', 10));
+    assert.match(receiveHandler, /beginTransaction/);
+    assert.match(receiveHandler, /received_qty = received_qty \+ \?/);
+    assert.match(receiveHandler, /recordInventoryMovement\(connection/);
+    const imp = source.slice(source.indexOf("app.post('/api/productos/import'"));
+    const importHandler = imp.slice(0, imp.indexOf('\napp.', 10));
+    assert.match(importHandler, /FOR UPDATE/);
+    assert.match(importHandler, /note: 'Importacion de productos'/);
+  });
+
+  test(`${label}: el ajuste valida la cantidad de forma estricta`, () => {
+    assert.match(source, /const delta = hasDelta \? parseStrictQuantity\(body\.cantidad_delta\) : null;/);
+  });
+}
+
+test('server/server.js: la anulacion usa su propio tipo de movimiento', () => {
+  const source = fs.readFileSync(BACKENDS[0], 'utf8');
+  assert.match(source, /type: 'anulacion'/);
+  assert.match(source, /ENUM\('ajuste','modificacion','anulacion'\)/);
+  assert.match(source, /async function ensureMovementTypeEnum\(\)/);
+});

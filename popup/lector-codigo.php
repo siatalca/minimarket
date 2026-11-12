@@ -6,7 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lector codigo</title>
     <link rel="stylesheet" href="../css/popUpStyle.css">
-    <script src="../js/functions.js?v=20261112a"></script>
+    <script src="../js/html_escape.js?v=20261112a"></script>
+    <script src="../js/functions.js?v=20261112b"></script>
     <style>
         .scanner-shell { max-width: 920px; margin: 0 auto; }
         .scanner-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 14px; align-items: start; }

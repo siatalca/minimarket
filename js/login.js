@@ -129,12 +129,20 @@ async function resolveCajaFromDeviceBinding(fingerprint) {
   }
 }
 
+// Aviso no bloqueante en la pantalla de login cuando falla el registro del equipo o de la caja.
+function showDeviceSyncWarning(message) {
+  const error = document.getElementById('login-error');
+  if (!error) return;
+  error.textContent = `${message}. Avisa al administrador.`;
+  error.classList.remove('hidden');
+}
+
 async function bindCajaToDeviceFingerprint(fingerprint, numeroCaja, nombreCaja) {
   if (!fingerprint || !/^\d+$/.test(String(numeroCaja || ''))) return;
   // Con sesion iniciada se envia el token (la caja reservada de admin_sia lo exige).
   const token = String(sessionStorage.getItem('token') || localStorage.getItem('token') || '').trim();
   try {
-    await fetch(API_URL + 'api/device-caja/bind', {
+    const response = await fetch(API_URL + 'api/device-caja/bind', {
       method: 'POST',
       headers: token ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } : { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -143,6 +151,10 @@ async function bindCajaToDeviceFingerprint(fingerprint, numeroCaja, nombreCaja) 
         nombre_caja: String(nombreCaja || `Caja ${numeroCaja}`),
       }),
     });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      showDeviceSyncWarning(`No se pudo asociar este equipo a la caja ${numeroCaja}: ${data.message || data.error || `error ${response.status}`}`);
+    }
   } catch (_) {}
 }
 
@@ -188,7 +200,8 @@ async function syncLocalBootstrapToServer() {
         if (!nombreCaja) {
           localStorage.setItem('nombre_caja', `Caja ${numeroCaja}`);
         }
-        await addCajaConnected();
+        const added = await addCajaConnected();
+        if (!added?.ok) showDeviceSyncWarning(`No se pudo registrar la caja ${numeroCaja} en el servidor: ${added?.message || 'error desconocido'}`);
       }
     }
   } catch (_) {}
@@ -729,7 +742,14 @@ document.getElementById('caja-form').addEventListener('submit', async (e) => {
 
     localStorage.setItem('n_caja', n_caja);
     localStorage.setItem('nombre_caja', nombre_caja);
-    await addCajaConnected();
+    const added = await addCajaConnected();
+    if (!added?.ok) {
+      // Si el servidor rechazo la caja, no se avanza al login con una caja que no existe.
+      localStorage.removeItem('n_caja');
+      localStorage.removeItem('nombre_caja');
+      alert(added?.message || 'No se pudo registrar la caja en el servidor.');
+      return;
+    }
     /*console.log(`el numero de caja: ${n_caja}`);
     console.log(`el nombre: ${nombre_caja}`);
     */

@@ -8,7 +8,8 @@
     <link rel="stylesheet" href="../css/styles.css">
     
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261112a"></script>
+    <script src="../js/html_escape.js?v=20261112a"></script>
+    <script src="../js/functions.js?v=20261112b"></script>
 </head>
 <body>
     <h1>TERMINAL TPV</h1>

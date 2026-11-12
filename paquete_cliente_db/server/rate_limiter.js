@@ -58,7 +58,22 @@ function retryAfterSeconds(ms) {
 function clientIpKey(req) {
   const ip = String(req?.ip || '').replace(/^::ffff:/, '');
   if (!ip || ip === '127.0.0.1' || ip === '::1') return null;
-  return ip;
+  return ip.includes(':') ? ipv6Prefix64(ip) : ip;
+}
+
+// Un cliente IPv6 suele tener un bloque /64 completo y puede rotar direcciones dentro de el:
+// se cuenta por esos primeros 64 bits para que rotar no esquive los limites.
+function ipv6Prefix64(ip) {
+  const clean = ip.split('%')[0].toLowerCase();
+  const [head, tail = ''] = clean.split('::');
+  const headParts = head ? head.split(':') : [];
+  const tailParts = clean.includes('::') && tail ? tail.split(':') : [];
+  const missing = Math.max(0, 8 - headParts.length - tailParts.length);
+  const groups = clean.includes('::')
+    ? [...headParts, ...Array(missing).fill('0'), ...tailParts]
+    : headParts;
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return clean;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }
 
 function rejectRateLimited(res, retryMs, message) {
@@ -100,6 +115,7 @@ function createLoginGuard({
   const byAccountIp = createRateLimiter({ max: perAccountIpMax, windowMs, now });
   const byAccount = createRateLimiter({ max: perAccountMax, windowMs, now });
   const byAccountNoIp = createRateLimiter({ max: perAccountNoIpMax, windowMs, now });
+  const byUnknown = createRateLimiter({ max: perAccountIpMax, windowMs, now });
 
   function blocked(limiter, key) {
     return { ok: false, retryMs: Math.max(1, limiter.retryAfterMs(key)) };
@@ -121,6 +137,15 @@ function createLoginGuard({
       } else if (!byAccountNoIp.hit(account)) {
         return blocked(byAccountNoIp, account);
       }
+      return { ok: true, retryMs: 0 };
+    },
+    // Usuario que no existe: el 429 aparece en el mismo intento que en una cuenta real, asi no se
+    // revela que nombres existen. Usa su propio contador para que inundar con nombres inventados
+    // no desplace (por el tope de claves) los contadores de las cuentas reales.
+    checkUnknownAccount(username, ip) {
+      const name = String(username || '').trim().toLowerCase();
+      const key = ip ? `${name}|${ip}` : name;
+      if (!byUnknown.hit(key)) return blocked(byUnknown, key);
       return { ok: true, retryMs: 0 };
     },
     // Login correcto: limpia los contadores de la cuenta y descuenta el intento de la IP.
@@ -145,6 +170,7 @@ module.exports = {
   createRateLimiter,
   retryAfterSeconds,
   clientIpKey,
+  ipv6Prefix64,
   rejectRateLimited,
   allowRegistrationRequest,
   createLoginGuard,

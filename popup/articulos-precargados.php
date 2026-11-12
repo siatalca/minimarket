@@ -7,7 +7,8 @@
     <title>Articulos precargados</title>
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261112a"></script>
+    <script src="../js/html_escape.js?v=20261112a"></script>
+    <script src="../js/functions.js?v=20261112b"></script>
     <style>
         .preloaded-wrap {
             max-width: 820px;

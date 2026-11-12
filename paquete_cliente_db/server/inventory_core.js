@@ -6,6 +6,17 @@ function roundQty(value) {
   return Number.isFinite(n) ? Number(n.toFixed(3)) : 0;
 }
 
+// Cantidad de un ajuste: solo numeros (o texto numerico como "10", "-2.5" o "0,75").
+// Rechaza texto, booleanos, vacios y valores no finitos que Number() convertiria en 0 o 1.
+function parseStrictQuantity(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const raw = value.trim().replace(',', '.');
+  if (!/^-?\d+(\.\d+)?$/.test(raw)) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function inventoryError(message, status, code, extra = {}) {
   const error = new Error(message);
   error.status = status;
@@ -111,4 +122,4 @@ function computeCancellationRestock(detailRows = []) {
   return restock;
 }
 
-module.exports = { applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, roundQty };
+module.exports = { applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, parseStrictQuantity, roundQty };

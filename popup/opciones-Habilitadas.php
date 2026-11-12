@@ -182,7 +182,8 @@
     </div>
 
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261112a"></script>
+    <script src="../js/html_escape.js?v=20261112a"></script>
+    <script src="../js/functions.js?v=20261112b"></script>
     <script>
         const API_URL = window.MinimarketApi.resolveApiBase();
 

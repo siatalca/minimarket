@@ -152,3 +152,38 @@ test('loginBlockedMessage indica los minutos restantes', () => {
   assert.equal(loginBlockedMessage(30000), 'Demasiados intentos fallidos. Intenta de nuevo en 1 minuto.');
   assert.equal(loginBlockedMessage(14 * 60000 + 1), 'Demasiados intentos fallidos. Intenta de nuevo en 15 minutos.');
 });
+
+const { ipv6Prefix64 } = require('../server/rate_limiter.js');
+
+test('IPv6 se agrupa por bloque /64', () => {
+  const a = clientIpKey({ ip: '2800:150:abcd:12:aaaa:bbbb:cccc:dddd' });
+  const b = clientIpKey({ ip: '2800:150:abcd:12::1' });
+  const c = clientIpKey({ ip: '2800:0150:ABCD:0012:1::9' });
+  assert.equal(a, '2800:150:abcd:12::/64');
+  assert.equal(a, b);
+  assert.equal(a, c, 'ceros a la izquierda y mayusculas dan la misma clave');
+  assert.notEqual(a, clientIpKey({ ip: '2800:150:abcd:13::1' }), 'otro /64 es otra clave');
+  assert.equal(ipv6Prefix64('no-es-ipv6'), 'no-es-ipv6');
+});
+
+test('login: un usuario inexistente recibe el 429 en el mismo intento que uno real', () => {
+  const c = clock();
+  const guard = createLoginGuard({ now: c.now });
+  const intentosHasta429 = (check) => {
+    for (let i = 1; i <= 20; i += 1) if (!check().ok) return i;
+    return null;
+  };
+  const real = intentosHasta429(() => guard.checkAccount(7, '8.8.8.8'));
+  const inexistente = intentosHasta429(() => guard.checkUnknownAccount('NoExiste', '8.8.8.8'));
+  assert.equal(real, 9);
+  assert.equal(inexistente, real, 'el 429 no revela si el usuario existe');
+  assert.equal(guard.checkUnknownAccount('noexiste', '8.8.8.8').ok, false, 'sin distinguir mayusculas');
+});
+
+test('login: los nombres inexistentes no desplazan los contadores de cuentas reales', () => {
+  const c = clock();
+  const guard = createLoginGuard({ now: c.now });
+  for (let i = 0; i < 8; i += 1) guard.checkAccount(7, '8.8.8.8');
+  for (let i = 0; i < 20000; i += 1) guard.checkUnknownAccount(`inventado${i}`, `10.0.${i % 250}.${i % 200}`);
+  assert.equal(guard.checkAccount(7, '8.8.8.8').ok, false, 'la cuenta real sigue bloqueada');
+});

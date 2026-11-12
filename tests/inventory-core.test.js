@@ -112,3 +112,15 @@ test('el ajuste de inventario exige la diferencia y no acepta un total', () => {
   assert.match(handler, /INVENTORY_DELTA_REQUIRED/);
   assert.doesNotMatch(handler, /body\.cantidad_actual/);
 });
+
+const { parseStrictQuantity } = require('../server/inventory_core.js');
+
+test('el ajuste solo acepta cantidades numericas', () => {
+  assert.equal(parseStrictQuantity(10), 10);
+  assert.equal(parseStrictQuantity('10'), 10);
+  assert.equal(parseStrictQuantity('-2.5'), -2.5);
+  assert.equal(parseStrictQuantity('0,75'), 0.75, 'acepta coma decimal');
+  for (const invalid of [true, false, '', ' ', 'abc', '10abc', '1e3', '--1', null, undefined, NaN, Infinity, {}]) {
+    assert.equal(parseStrictQuantity(invalid), null, `rechaza ${String(invalid)}`);
+  }
+});

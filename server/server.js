@@ -21,7 +21,10 @@ const {
   RestrictedCloseReplayGuard,
 } = require('./session_reservation_policy');
 const { closeShiftCore } = require('./shift_close_core');
-const { applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, roundQty } = require('./inventory_core');
+const { isUserActive } = require('./user_status');
+const {
+  applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, parseStrictQuantity, roundQty,
+} = require('./inventory_core');
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
@@ -540,15 +543,30 @@ function isAdminSiaUsername(value) {
   return String(value || '').trim().toLowerCase() === ADMIN_SIA_USERNAME;
 }
 
+// "activo" es el interruptor de la ventana Cajeros (puede o no usar el sistema).
+// "estado_usuario" queda solo como "conectado" del sistema de sesion antiguo (Salir lo pone en 0),
+// asi que no debe usarse para decidir si alguien puede entrar.
+async function ensureUserActiveColumn() {
+  const [rows] = await db.query(
+    `SELECT COLUMN_NAME
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'usuarios' AND COLUMN_NAME = 'activo'`,
+    [config.db.database]
+  );
+  if (!rows.length) {
+    await db.query('ALTER TABLE usuarios ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1');
+  }
+}
+
 async function requireAdministrator(req, res) {
   try {
     const userId = toInt(req.user?.sub);
     const [rows] = userId
-      ? await db.query('SELECT user, es_administrador, estado_usuario FROM usuarios WHERE id = ? LIMIT 1', [userId])
+      ? await db.query('SELECT user, es_administrador, activo FROM usuarios WHERE id = ? LIMIT 1', [userId])
       : [[]];
     const row = rows[0];
     // Un administrador desactivado no puede seguir actuando aunque su sesion no haya vencido.
-    if (row && Number(row.estado_usuario ?? 1) === 1 && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
+    if (isUserActive(row) && (Number(row.es_administrador) === 1 || isAdminSiaUsername(row.user))) {
       return true;
     }
     const message = 'Solo un administrador puede realizar esta accion';
@@ -979,7 +997,7 @@ async function getDatabaseVerifySnapshot() {
 async function buildMaintenanceReport({ requestedBy = null } = {}) {
   const verify = await getDatabaseVerifySnapshot();
   const [infoRows] = await db.query(
-    'SELECT nombre, telefono, mail, tipo_local FROM info WHERE id_info = 1 LIMIT 1'
+    'SELECT nombre, telefono, mail, tipo_local FROM info ORDER BY (id_info = 1) DESC, id_info ASC LIMIT 1'
   );
   const business = infoRows[0] || {};
 
@@ -3926,7 +3944,7 @@ async function ensureOperationalTables() {
       producto_id INT NOT NULL,
       codigo_barras VARCHAR(80) NOT NULL,
       producto_descripcion VARCHAR(255) NOT NULL,
-      tipo_movimiento ENUM('ajuste','modificacion') NOT NULL DEFAULT 'ajuste',
+      tipo_movimiento ENUM('ajuste','modificacion','anulacion') NOT NULL DEFAULT 'ajuste',
       cantidad_anterior DECIMAL(12,3) NOT NULL DEFAULT 0,
       cambio_cantidad DECIMAL(12,3) NOT NULL DEFAULT 0,
       cantidad_nueva DECIMAL(12,3) NOT NULL DEFAULT 0,
@@ -4628,6 +4646,24 @@ async function bootstrapDatabase() {
   await ensureInfoOwnerColumns();
   await ensureBoxLimitColumn();
   await ensureSaleDetailStockColumn();
+  await ensureMovementTypeEnum();
+  await ensureUserActiveColumn();
+}
+
+// Agrega el tipo 'anulacion' al historial de inventario (devoluciones por venta anulada).
+async function ensureMovementTypeEnum() {
+  const [rows] = await db.query(
+    `SELECT COLUMN_TYPE
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'inventory_movements' AND COLUMN_NAME = 'tipo_movimiento'`,
+    [config.db.database]
+  );
+  if (rows.length && !String(rows[0].COLUMN_TYPE || '').includes("'anulacion'")) {
+    await db.query(
+      `ALTER TABLE inventory_movements
+       MODIFY tipo_movimiento ENUM('ajuste','modificacion','anulacion') NOT NULL DEFAULT 'ajuste'`
+    );
+  }
 }
 
 // Marca si cada linea de venta desconto stock, para que la anulacion devuelva exactamente
@@ -4823,7 +4859,7 @@ app.get('/api/getInfo', async (req, res) => {
   try {
     const [results] = await db.query(
       `SELECT * FROM info
-       WHERE id_info = 1
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     res.json(results.map(omitInfoOwnerColumns));
@@ -4871,7 +4907,7 @@ app.get('/api/business-owner-settings', async (req, res) => {
       `SELECT nombre, telefono, mail, tipo_local, direccion,
               dueno_nombre, dueno_rut, dueno_telefono, dueno_mail
        FROM info
-       WHERE id_info = 1
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     if (!rows.length) {
@@ -5319,7 +5355,7 @@ app.post('/api/device-caja/bind', async (req, res) => {
 app.get('/api/usuarios', async (req, res) => {
   try {
     const [results] = await db.query(
-      'SELECT id, nombre, user, estado_usuario, es_administrador FROM usuarios ORDER BY nombre ASC'
+      'SELECT id, nombre, user, estado_usuario, activo, es_administrador FROM usuarios ORDER BY nombre ASC'
     );
     const showAdminSia = await isAdminSiaUser(req.user?.sub);
     return res.json(showAdminSia ? results : results.filter((row) => !isAdminSiaUsername(row.user)));
@@ -5332,7 +5368,7 @@ app.get('/api/cajeros', async (req, res) => {
   try {
     const selectPermissions = CASHIER_PERMISSION_FIELDS.map((field) => `p.\`${field}\``).join(', ');
     const [rows] = await db.query(
-      `SELECT u.id, u.user, u.nombre, u.estado_usuario, u.es_administrador,
+      `SELECT u.id, u.user, u.nombre, u.activo, u.es_administrador,
               ${selectPermissions}
        FROM usuarios u
        LEFT JOIN cajero_permisos p ON p.usuario_id = u.id
@@ -5349,7 +5385,7 @@ app.get('/api/cajeros', async (req, res) => {
         id: Number(row.id),
         user: row.user,
         nombre: row.nombre,
-        estado_usuario: Number(row.estado_usuario || 0),
+        activo: Number(row.activo ?? 1),
         es_administrador: Number(row.es_administrador || 0),
         permisos: permissions,
       };
@@ -5365,7 +5401,7 @@ app.post('/api/cajeros', async (req, res) => {
   const username = toText(req.body?.user, 80);
   const nombre = toText(req.body?.nombre, 120);
   const plainPassword = typeof req.body?.contrasena === 'string' ? req.body.contrasena : '';
-  const estadoUsuario = normalizeBool(req.body?.estado_usuario, true) ? 1 : 0;
+  const activo = normalizeBool(req.body?.activo ?? req.body?.estado_usuario, true) ? 1 : 0;
   const esAdministrador = normalizeBool(req.body?.es_administrador, false) ? 1 : 0;
   const permisos = buildCashierPermissions(req.body?.permisos || {});
 
@@ -5388,8 +5424,8 @@ app.post('/api/cajeros', async (req, res) => {
 
     const hashed = await bcrypt.hash(plainPassword, 12);
     const [result] = await connection.query(
-      'INSERT INTO usuarios (user, nombre, contrasena, estado_usuario, es_administrador) VALUES (?, ?, ?, ?, ?)',
-      [username, nombre, hashed, estadoUsuario, esAdministrador]
+      'INSERT INTO usuarios (user, nombre, contrasena, estado_usuario, activo, es_administrador) VALUES (?, ?, ?, 0, ?, ?)',
+      [username, nombre, hashed, activo, esAdministrador]
     );
     const usuarioId = Number(result.insertId);
 
@@ -5421,7 +5457,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
   const userId = toInt(req.params?.id);
   const username = toText(req.body?.user, 80);
   const nombre = toText(req.body?.nombre, 120);
-  const estadoUsuario = normalizeBool(req.body?.estado_usuario, true) ? 1 : 0;
+  const activo = normalizeBool(req.body?.activo ?? req.body?.estado_usuario, true) ? 1 : 0;
   const esAdministrador = normalizeBool(req.body?.es_administrador, false) ? 1 : 0;
   const plainPassword = typeof req.body?.contrasena === 'string' ? req.body.contrasena : '';
   const permisos = buildCashierPermissions(req.body?.permisos || {});
@@ -5442,7 +5478,7 @@ app.put('/api/cajeros/:id', async (req, res) => {
       await connection.rollback();
       return res.status(404).json({ error: 'Cajero no encontrado' });
     }
-    if (targetIsAdminSia && (!isAdminSiaUsername(username) || !estadoUsuario || !esAdministrador)) {
+    if (targetIsAdminSia && (!isAdminSiaUsername(username) || !activo || !esAdministrador)) {
       await connection.rollback();
       return res.status(400).json({ error: 'La cuenta admin_sia debe conservar su usuario, estar activa y ser administrador' });
     }
@@ -5465,13 +5501,13 @@ app.put('/api/cajeros/:id', async (req, res) => {
     if (plainPassword) {
       const hashed = await bcrypt.hash(plainPassword, 12);
       await connection.query(
-        'UPDATE usuarios SET user = ?, nombre = ?, contrasena = ?, estado_usuario = ?, es_administrador = ? WHERE id = ?',
-        [username, nombre, hashed, estadoUsuario, esAdministrador, userId]
+        'UPDATE usuarios SET user = ?, nombre = ?, contrasena = ?, activo = ?, es_administrador = ? WHERE id = ?',
+        [username, nombre, hashed, activo, esAdministrador, userId]
       );
     } else {
       await connection.query(
-        'UPDATE usuarios SET user = ?, nombre = ?, estado_usuario = ?, es_administrador = ? WHERE id = ?',
-        [username, nombre, estadoUsuario, esAdministrador, userId]
+        'UPDATE usuarios SET user = ?, nombre = ?, activo = ?, es_administrador = ? WHERE id = ?',
+        [username, nombre, activo, esAdministrador, userId]
       );
     }
 
@@ -5899,7 +5935,7 @@ app.post('/api/dte/print-test-58mm', async (req, res) => {
     const [businessRows] = await db.query(
       `SELECT nombre, telefono, mail, tipo_local
        FROM info
-       ORDER BY id_info DESC
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     const business = businessRows[0] || null;
@@ -7463,33 +7499,60 @@ app.post('/api/purchase-order/receive', async (req, res) => {
     }
     const item = itemRows[0];
     const requestedQty = Number(item.requested_qty || 0);
-    const currentReceived = Number(item.received_qty || 0);
-    const newReceived = currentReceived + qtyReceived;
 
-    await db.query(
-      `UPDATE purchase_order_items
-       SET received_qty = ?
-       WHERE id = ?`,
-      [newReceived, item.id]
-    );
-
+    // La cantidad recibida, el stock y su registro en el historial se guardan juntos:
+    // si algo falla no queda la orden marcada como recibida sin que suba el stock.
+    let newReceived = 0;
     let inventoryUpdated = false;
     let inventoryMessage = 'Producto recibido registrado, sin impacto en inventario.';
-    if (item.product_id) {
-      const [productRows] = await db.query(
-        'SELECT id_producto, utiliza_inventario FROM productos WHERE id_producto = ? LIMIT 1',
-        [item.product_id]
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query(
+        `UPDATE purchase_order_items
+         SET received_qty = received_qty + ?
+         WHERE id = ?`,
+        [qtyReceived, item.id]
       );
-      if (productRows.length && Number(productRows[0].utiliza_inventario || 0) === 1) {
-        await db.query(
-          'UPDATE productos SET cantidad_actual = cantidad_actual + ? WHERE id_producto = ?',
-          [qtyReceived, item.product_id]
+      const [receivedRows] = await connection.query(
+        'SELECT received_qty FROM purchase_order_items WHERE id = ? LIMIT 1',
+        [item.id]
+      );
+      newReceived = Number(receivedRows[0]?.received_qty || 0);
+
+      if (item.product_id) {
+        const [productRows] = await connection.query(
+          `SELECT id_producto, codigo_barras, descripcion, utiliza_inventario, cantidad_actual
+           FROM productos
+           WHERE id_producto = ?
+           LIMIT 1
+           FOR UPDATE`,
+          [item.product_id]
         );
-        inventoryUpdated = true;
-        inventoryMessage = 'Inventario actualizado correctamente.';
-      } else {
-        inventoryMessage = 'Producto recibido registrado, pero el producto no usa inventario.';
+        if (productRows.length && Number(productRows[0].utiliza_inventario || 0) === 1) {
+          const product = productRows[0];
+          const before = roundQty(product.cantidad_actual);
+          await connection.query(
+            'UPDATE productos SET cantidad_actual = cantidad_actual + ? WHERE id_producto = ?',
+            [qtyReceived, item.product_id]
+          );
+          await recordInventoryMovement(connection, {
+            productId: product.id_producto, code: product.codigo_barras, description: product.descripcion,
+            type: 'modificacion', previousQty: before, delta: qtyReceived, newQty: before + qtyReceived,
+            note: `Recepcion de orden de compra #${order.id}`, userId: toInt(req.user?.sub),
+          });
+          inventoryUpdated = true;
+          inventoryMessage = 'Inventario actualizado correctamente.';
+        } else {
+          inventoryMessage = 'Producto recibido registrado, pero el producto no usa inventario.';
+        }
       }
+      await connection.commit();
+    } catch (txError) {
+      try { await connection.rollback(); } catch (_) {}
+      throw txError;
+    } finally {
+      connection.release();
     }
 
     const [orderStateRows] = await db.query(
@@ -7680,7 +7743,7 @@ app.get('/api/inventory/movements', async (req, res) => {
   const toDate = String(req.query?.to || '').trim() || today;
   const cajaRaw = String(req.query?.caja || 'all').trim().toLowerCase();
   const movementTypeRaw = String(req.query?.movement_type || 'all').trim().toLowerCase();
-  const allowedMovementTypes = new Set(['all', 'ajuste', 'modificacion', 'venta', 'top_sold']);
+  const allowedMovementTypes = new Set(['all', 'ajuste', 'modificacion', 'anulacion', 'venta', 'top_sold']);
   if (movementTypeRaw && !allowedMovementTypes.has(movementTypeRaw)) {
     return res.status(400).json({ message: 'Tipo de movimiento invalido' });
   }
@@ -7707,7 +7770,7 @@ app.get('/api/inventory/movements', async (req, res) => {
     movementFilters.push('m.caja_id = ?');
     movementParams.push(cajaId);
   }
-  if (movementType === 'ajuste' || movementType === 'modificacion') {
+  if (movementType === 'ajuste' || movementType === 'modificacion' || movementType === 'anulacion') {
     movementFilters.push('m.tipo_movimiento = ?');
     movementParams.push(movementType);
   }
@@ -8134,15 +8197,28 @@ app.post('/api/productos/import', async (req, res) => {
     if (!barcode || !description || cost === null || profit === null || price === null || taxExempt === null) {
       continue;
     }
+    // Cada fila en su transaccion: la existencia del archivo reemplaza la actual y la
+    // diferencia queda en el historial de inventario.
+    let connection;
     try {
-      const resolvedFormatId = await resolveSaleFormatId(db, formatName);
-      if (!resolvedFormatId) continue;
-      let [departmentRows] = await db.query('SELECT id_departamento FROM departamento WHERE nombre = ? LIMIT 1', [departmentName]);
-      if (!departmentRows.length) {
-        await db.query('INSERT INTO departamento (nombre) VALUES (?)', [departmentName]);
-        [departmentRows] = await db.query('SELECT id_departamento FROM departamento WHERE nombre = ? LIMIT 1', [departmentName]);
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      const resolvedFormatId = await resolveSaleFormatId(connection, formatName);
+      if (!resolvedFormatId) {
+        await connection.rollback();
+        continue;
       }
-      await db.query(
+      let [departmentRows] = await connection.query('SELECT id_departamento FROM departamento WHERE nombre = ? LIMIT 1', [departmentName]);
+      if (!departmentRows.length) {
+        await connection.query('INSERT INTO departamento (nombre) VALUES (?)', [departmentName]);
+        [departmentRows] = await connection.query('SELECT id_departamento FROM departamento WHERE nombre = ? LIMIT 1', [departmentName]);
+      }
+      const [existingRows] = await connection.query(
+        'SELECT id_producto, cantidad_actual, utiliza_inventario FROM productos WHERE codigo_barras = ? LIMIT 1 FOR UPDATE',
+        [barcode]
+      );
+      const newQty = roundQty(qty ?? 0);
+      const [result] = await connection.query(
         `INSERT INTO productos (
           codigo_barras, descripcion, id_formato, costo, ganancia, precio_venta,
           utiliza_inventario, cantidad_actual, cantidad_minima,
@@ -8166,16 +8242,35 @@ app.post('/api/productos/import', async (req, res) => {
           profit,
           price,
           toBool(row.utiliza_inventario) ?? 0,
-          qty ?? 0,
+          newQty,
           minQty ?? 0,
           maxQty ?? 0,
           departmentRows[0].id_departamento,
           taxExempt ? 1 : 0,
         ]
       );
+      const previousQty = existingRows.length ? roundQty(existingRows[0].cantidad_actual) : 0;
+      const productId = existingRows.length ? Number(existingRows[0].id_producto) : Number(result.insertId || 0);
+      const delta = roundQty(newQty - previousQty);
+      // El ON DUPLICATE KEY no cambia utiliza_inventario: un producto existente conserva el suyo.
+      const usesInventory = existingRows.length
+        ? Number(existingRows[0].utiliza_inventario || 0) === 1
+        : Boolean(toBool(row.utiliza_inventario));
+      if (productId > 0 && delta !== 0 && usesInventory) {
+        await recordInventoryMovement(connection, {
+          productId, code: barcode, description, type: delta < 0 ? 'ajuste' : 'modificacion',
+          previousQty, delta, newQty, note: 'Importacion de productos', userId: toInt(req.user?.sub),
+        });
+      }
+      await connection.commit();
       inserted += 1;
     } catch (_) {
+      if (connection) {
+        try { await connection.rollback(); } catch (__) {}
+      }
       // Continuar con siguiente fila.
+    } finally {
+      if (connection) connection.release();
     }
   }
 
@@ -8467,7 +8562,7 @@ app.post('/api/print/sale-ticket', async (req, res) => {
     const [businessRows] = await db.query(
       `SELECT nombre, telefono, mail, tipo_local
        FROM info
-       ORDER BY id_info DESC
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     const business = businessRows[0] || null;
@@ -8684,7 +8779,7 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
     const [businessRows] = await db.query(
       `SELECT nombre, telefono, mail, tipo_local
        FROM info
-       ORDER BY id_info DESC
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     const cutPaymentSettings = await getCutPaymentSettings(db);
@@ -9020,7 +9115,7 @@ app.post('/api/print/cut-rebuilt-ticket', async (req, res) => {
     const [businessRows] = await db.query(
       `SELECT nombre, telefono, mail, tipo_local
        FROM info
-       ORDER BY id_info DESC
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     const cutPaymentSettings = await getCutPaymentSettings(db);
@@ -9224,7 +9319,7 @@ app.post('/api/print/cut-format-test', async (req, res) => {
     const [businessRows] = await db.query(
       `SELECT nombre, telefono, mail, tipo_local
        FROM info
-       ORDER BY id_info DESC
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     const [cashierRows] = requesterUserId
@@ -9384,7 +9479,7 @@ app.post('/api/print/sale-ticket-test', async (req, res) => {
     const [businessRows] = await db.query(
       `SELECT nombre, telefono, mail, tipo_local
        FROM info
-       ORDER BY id_info DESC
+       ORDER BY (id_info = 1) DESC, id_info ASC
        LIMIT 1`
     );
     const business = businessRows[0] || null;
@@ -11836,7 +11931,7 @@ app.post('/api/sales/:saleId/cancel', async (req, res) => {
         [entry.quantity, productId]
       );
       await recordInventoryMovement(connection, {
-        productId, code: entry.code, description: entry.name, type: 'modificacion',
+        productId, code: entry.code, description: entry.name, type: 'anulacion',
         previousQty: before, delta: entry.quantity, newQty: before + entry.quantity,
         note: `Devolucion por anulacion de venta ${saleId}`, cajaId: toInt(sale.caja_id), userId: authUserId,
       });
@@ -13828,10 +13923,11 @@ app.post('/api/auth/refresh', async (req, res) => {
     }
 
     const [userRows] = await db.query(
-      'SELECT id, nombre FROM usuarios WHERE id = ? LIMIT 1',
+      'SELECT id, nombre, activo FROM usuarios WHERE id = ? LIMIT 1',
       [userId]
     );
-    if (!userRows.length) {
+    // Un usuario desactivado pierde la sesion al renovarla, aunque el token siga vigente.
+    if (!isUserActive(userRows[0])) {
       await db.query('UPDATE user_auth_sessions SET revoked_at = NOW() WHERE id = ?', [authSession.id]);
       return res.status(401).json({ message: 'Usuario no disponible', code: 'REFRESH_INVALID' });
     }
@@ -14078,7 +14174,7 @@ app.post('/api/login', async (req, res) => {
   try {
     const loginPermissionSelect = CASHIER_PERMISSION_FIELDS.map((field) => `p.\`${field}\``).join(', ');
     const [rows] = await db.query(
-      `SELECT u.id, u.user, u.nombre, u.contrasena, u.es_administrador,
+      `SELECT u.id, u.user, u.nombre, u.contrasena, u.es_administrador, u.activo,
               ${loginPermissionSelect}
        FROM usuarios u
        LEFT JOIN cajero_permisos p ON p.usuario_id = u.id
@@ -14089,6 +14185,10 @@ app.post('/api/login', async (req, res) => {
     );
 
     if (rows.length === 0) {
+      const unknownAttempt = loginGuard.checkUnknownAccount(usernameInput, loginIp);
+      if (!unknownAttempt.ok) {
+        return rejectRateLimited(res, unknownAttempt.retryMs, loginBlockedMessage(unknownAttempt.retryMs));
+      }
       return res.status(401).json({ message: 'Credenciales invalidas' });
     }
 
@@ -14113,6 +14213,11 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ message: 'Credenciales invalidas' });
     }
     loginGuard.success(user.id, loginIp);
+
+    // La clave es correcta, pero un usuario desactivado no puede iniciar sesion.
+    if (!isUserActive(user)) {
+      return res.status(403).json({ message: 'Usuario desactivado. Contacta al administrador.', code: 'USER_DISABLED' });
+    }
 
     let reservation = null;
     let reservationInvalid = false;
@@ -15305,7 +15410,7 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
   // La pantalla envia la DIFERENCIA (cantidad_delta), no el total: el total se calcula aqui sobre
   // la existencia real bloqueada, asi una venta o un ajuste simultaneo nunca se sobrescribe.
   const hasDelta = body.cantidad_delta !== undefined && body.cantidad_delta !== null && body.cantidad_delta !== '';
-  const delta = hasDelta ? toNumber(body.cantidad_delta) : null;
+  const delta = hasDelta ? parseStrictQuantity(body.cantidad_delta) : null;
   const minQty = toNumber(body.cantidad_minima);
   const maxQty = toNumber(body.cantidad_maxima);
   const useInventory = toBool(body.utiliza_inventario);

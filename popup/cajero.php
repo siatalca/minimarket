@@ -364,7 +364,8 @@
     </div>
 
     <script src="../js/api_base.js?v=20261003a"></script>
-    <script src="../js/functions.js?v=20261112a"></script>
+    <script src="../js/html_escape.js?v=20261112a"></script>
+    <script src="../js/functions.js?v=20261112b"></script>
     <script>
         const API_URL = window.MinimarketApi.resolveApiBase();
 
@@ -544,7 +545,7 @@
             document.getElementById('cashier-user').value = cashier.user || '';
             document.getElementById('cashier-name').value = cashier.nombre || '';
             document.getElementById('cashier-password').value = '';
-            document.getElementById('cashier-active').checked = Number(cashier.estado_usuario || 0) === 1;
+            document.getElementById('cashier-active').checked = Number(cashier.activo ?? 1) === 1;
             document.getElementById('cashier-admin').checked = Number(cashier.es_administrador || 0) === 1;
             renderPermissions(cashier.permisos || defaultPermissions(), false);
         }
@@ -582,7 +583,7 @@
             rows.forEach((cashier) => {
                 const li = document.createElement('li');
                 li.className = `cashier-item ${Number(selectedCashierId) === Number(cashier.id) ? 'active' : ''}`;
-                const isActive = Number(cashier.estado_usuario || 0) === 1;
+                const isActive = Number(cashier.activo ?? 1) === 1;
                 const isAdmin = Number(cashier.es_administrador || 0) === 1;
                 const stateClass = isActive ? 'state-tag' : 'state-tag off';
                 const stateText = isActive ? 'Activo' : 'Inactivo';
@@ -665,7 +666,7 @@
                 user: String(document.getElementById('cashier-user').value || '').trim(),
                 nombre: String(document.getElementById('cashier-name').value || '').trim(),
                 contrasena: String(document.getElementById('cashier-password').value || ''),
-                estado_usuario: document.getElementById('cashier-active').checked,
+                activo: document.getElementById('cashier-active').checked,
                 es_administrador: document.getElementById('cashier-admin').checked,
                 permisos: formPermissions()
             };

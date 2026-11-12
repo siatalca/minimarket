@@ -16,15 +16,6 @@ function getLocalPrintBridgeRequiredMessage() {
     return 'No se detecto la impresion local de esta caja. Abre iniciar_servicios_ocultos.bat en este equipo y vuelve a intentar.';
 }
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
 function normalizeTicketPaperWidthMm(value, fallback = 58) {
     const parsed = Number.parseInt(value, 10);
     if (!Number.isInteger(parsed)) {
