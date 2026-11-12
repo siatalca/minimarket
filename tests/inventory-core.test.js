@@ -124,3 +124,64 @@ test('el ajuste solo acepta cantidades numericas', () => {
     assert.equal(parseStrictQuantity(invalid), null, `rechaza ${String(invalid)}`);
   }
 });
+
+const { createIdempotencyCache, normalizeRequestId } = require('../server/inventory_core.js');
+
+test('caso del video: el mismo ajuste de +9 enviado dos veces a la vez deja 9, no 18', async () => {
+  const connection = fakeConnection({ ...producto, cantidad_actual: 0 });
+  const cache = createIdempotencyCache();
+  const apply = () => applyInventoryDelta({ connection, code: '780123', delta: 9 });
+  const [a, b] = await Promise.all([
+    cache.run('780123|form-1234abcd', apply),
+    cache.run('780123|form-1234abcd', apply),
+  ]);
+  assert.equal(connection.state.product.cantidad_actual, 9);
+  assert.equal(connection.state.movements.length, 1, 'un solo movimiento en el historial');
+  assert.equal(a.duplicate, false);
+  assert.equal(b.duplicate, true);
+  assert.equal(b.value.newQty, 9, 'el repetido recibe el mismo resultado');
+});
+
+test('un reenvio posterior del mismo formulario tampoco suma de nuevo', async () => {
+  const connection = fakeConnection({ ...producto, cantidad_actual: 0 });
+  const cache = createIdempotencyCache();
+  const apply = () => applyInventoryDelta({ connection, code: '780123', delta: 9 });
+  await cache.run('k-form-0001', apply);
+  await cache.run('k-form-0001', apply);
+  assert.equal(connection.state.product.cantidad_actual, 9);
+});
+
+test('formularios distintos si se aplican los dos', async () => {
+  const connection = fakeConnection({ ...producto, cantidad_actual: 0 });
+  const cache = createIdempotencyCache();
+  const apply = () => applyInventoryDelta({ connection, code: '780123', delta: 9 });
+  await cache.run('k-form-0001', apply);
+  await cache.run('k-form-0002', apply);
+  assert.equal(connection.state.product.cantidad_actual, 18);
+});
+
+test('si el primer envio falla, el mismo formulario se puede corregir y reenviar', async () => {
+  const connection = fakeConnection({ ...producto, cantidad_actual: 2 });
+  const cache = createIdempotencyCache();
+  await assert.rejects(cache.run('k-form-0003', () => applyInventoryDelta({ connection, code: '780123', delta: -5 })));
+  const ok = await cache.run('k-form-0003', () => applyInventoryDelta({ connection, code: '780123', delta: -1 }));
+  assert.equal(ok.duplicate, false);
+  assert.equal(connection.state.product.cantidad_actual, 1);
+});
+
+test('el identificador vence pasado el tiempo de memoria', async () => {
+  let t = 0;
+  const cache = createIdempotencyCache({ ttlMs: 1000, now: () => t });
+  let calls = 0;
+  await cache.run('k-form-0004', async () => { calls += 1; });
+  t = 1500;
+  await cache.run('k-form-0004', async () => { calls += 1; });
+  assert.equal(calls, 2);
+});
+
+test('normalizeRequestId acepta identificadores tipo UUID y rechaza basura', () => {
+  assert.equal(normalizeRequestId('3f2c1a9e-7b4d-4e2a-9c1f-0a1b2c3d4e5f'), '3f2c1a9e-7b4d-4e2a-9c1f-0a1b2c3d4e5f');
+  for (const bad of ['', 'corto', 'con espacios aqui', "x'; DROP", null, 12345678, 'a'.repeat(65)]) {
+    assert.equal(normalizeRequestId(bad), null, String(bad));
+  }
+});

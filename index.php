@@ -271,7 +271,7 @@
     <script src="./js/product_name_display.js?v=20260923a"></script>
     <script src="./js/ticket_print_method.js?v=20261003b"></script>
     <script src="./js/html_escape.js?v=20261112a"></script>
-    <script src="./js/scripts.js?v=20261112c"></script>
+    <script src="./js/scripts.js?v=20261112d"></script>
 
 </body>
 

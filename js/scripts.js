@@ -10156,6 +10156,7 @@ async function loadInventoryProductByCode() {
         const saveBtn = document.getElementById('inventory-save-btn');
         if (saveBtn) saveBtn.disabled = false;
         selectedInventoryProduct = product;
+        inventoryRestockRequestId = newInventoryRequestId();
         setInventoryNewScanInputLocked(true);
         setInventoryFeedback('Producto cargado.', 'ok', normalizeText(product.descripcion || ''));
         focusInventoryFlowStart('add');
@@ -10206,6 +10207,7 @@ async function loadInventoryAdjustProductByCode() {
         const saveBtn = document.getElementById('inventory-adjust-save-btn');
         if (saveBtn) saveBtn.disabled = false;
         selectedInventoryAdjustProduct = product;
+        inventoryAdjustRequestId = newInventoryRequestId();
         setInventoryAdjustScanInputLocked(true);
         setInventoryAdjustFeedback(`Producto cargado: ${normalizeText(product.descripcion || '')}.`, 'ok');
         focusInventoryFlowStart('adjust');
@@ -10216,7 +10218,7 @@ async function loadInventoryAdjustProductByCode() {
     }
 }
 
-async function saveInventoryChanges() {
+async function saveInventoryChangesNow() {
     if (!selectedInventoryProduct) {
         setInventoryFeedback('Primero carga un producto con inventario habilitado.', 'warning');
         return;
@@ -10271,6 +10273,7 @@ async function saveInventoryChanges() {
                 // Se envia solo la diferencia: el servidor la suma a la existencia real,
                 // para no pisar ventas o ajustes hechos mientras esta pantalla estaba abierta.
                 cantidad_delta: restockQty,
+                request_id: inventoryRestockRequestId,
                 cantidad_minima: minStock,
                 cantidad_maxima: maxStock,
                 utiliza_inventario: 1,
@@ -10300,7 +10303,32 @@ async function saveInventoryChanges() {
     }
 }
 
-async function saveInventoryAdjustChanges() {
+// Mientras se guarda, el boton queda bloqueado y se ignoran nuevos intentos.
+async function runInventorySaveOnce(kind, buttonId, save) {
+    const isAdjust = kind === 'adjust';
+    if (isAdjust ? inventoryAdjustSaving : inventoryRestockSaving) return;
+    if (isAdjust) inventoryAdjustSaving = true; else inventoryRestockSaving = true;
+    const btn = document.getElementById(buttonId);
+    if (btn) btn.disabled = true;
+    try {
+        await save();
+    } finally {
+        if (isAdjust) inventoryAdjustSaving = false; else inventoryRestockSaving = false;
+        // Si quedo un producto cargado (por ejemplo, el guardado fallo), se puede reintentar.
+        const stillLoaded = isAdjust ? selectedInventoryAdjustProduct : selectedInventoryProduct;
+        if (btn) btn.disabled = !stillLoaded;
+    }
+}
+
+function saveInventoryChanges() {
+    return runInventorySaveOnce('restock', 'inventory-save-btn', saveInventoryChangesNow);
+}
+
+function saveInventoryAdjustChanges() {
+    return runInventorySaveOnce('adjust', 'inventory-adjust-save-btn', saveInventoryAdjustChangesNow);
+}
+
+async function saveInventoryAdjustChangesNow() {
     if (!selectedInventoryAdjustProduct) {
         setInventoryAdjustFeedback('Primero carga un producto con inventario habilitado.', 'warning');
         return;
@@ -10345,6 +10373,7 @@ async function saveInventoryAdjustChanges() {
             }),
             body: JSON.stringify({
                 cantidad_delta: adjustQty,
+                request_id: inventoryAdjustRequestId,
                 costo: cost,
                 ganancia: profit,
                 precio_venta: salePrice,
@@ -12714,6 +12743,17 @@ let promotionProductsLoadPromise = null;
 let promotionProductsSelectHydrated = false;
 let selectedInventoryProduct = null;
 let selectedInventoryAdjustProduct = null;
+// Identificador del formulario cargado: si el mismo guardado llega dos veces al servidor
+// (doble clic, Enter + clic), se aplica una sola vez. Se renueva al cargar otro producto.
+let inventoryRestockRequestId = null;
+let inventoryAdjustRequestId = null;
+let inventoryRestockSaving = false;
+let inventoryAdjustSaving = false;
+
+function newInventoryRequestId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `inv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 let shoppingOrderState = { order: null, items: [] };
 let shoppingReceiveState = { selectedOrderId: null, selectedOrder: null, pendingOrders: [], items: [] };
 

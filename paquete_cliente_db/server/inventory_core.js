@@ -122,4 +122,52 @@ function computeCancellationRestock(detailRows = []) {
   return restock;
 }
 
-module.exports = { applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, parseStrictQuantity, roundQty };
+// Evita aplicar dos veces el mismo ajuste: la pantalla manda un identificador por formulario y,
+// si el mismo llega de nuevo (doble clic, Enter + clic, reintento), se devuelve el resultado del
+// primero sin volver a sumar. Solo se recuerdan los exitos: si el primero falla, se puede corregir
+// y reenviar con el mismo identificador. Vive en memoria del proceso.
+function createIdempotencyCache({ ttlMs = 15 * 60 * 1000, maxKeys = 5000, now = () => Date.now() } = {}) {
+  const entries = new Map();
+
+  function prune(t) {
+    // Map conserva el orden de insercion, que es tambien el orden por antiguedad.
+    for (const [key, entry] of entries) {
+      if (t - entry.at < ttlMs) break;
+      entries.delete(key);
+    }
+    while (entries.size >= maxKeys) entries.delete(entries.keys().next().value);
+  }
+
+  return {
+    async run(key, fn) {
+      const t = now();
+      prune(t);
+      const existing = entries.get(key);
+      if (existing) return { value: await existing.promise, duplicate: true };
+      const promise = Promise.resolve().then(fn);
+      entries.set(key, { promise, at: t });
+      try {
+        return { value: await promise, duplicate: false };
+      } catch (err) {
+        entries.delete(key);
+        throw err;
+      }
+    },
+  };
+}
+
+// Identificador de formulario valido (el navegador usa crypto.randomUUID o similar).
+function normalizeRequestId(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Za-z0-9-]{8,64}$/.test(raw) ? raw : null;
+}
+
+module.exports = {
+  applyInventoryDelta,
+  computeCancellationRestock,
+  recordInventoryMovement,
+  parseStrictQuantity,
+  roundQty,
+  createIdempotencyCache,
+  normalizeRequestId,
+};

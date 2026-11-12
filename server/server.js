@@ -24,7 +24,10 @@ const { closeShiftCore } = require('./shift_close_core');
 const { isUserActive } = require('./user_status');
 const {
   applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, parseStrictQuantity, roundQty,
+  createIdempotencyCache, normalizeRequestId,
 } = require('./inventory_core');
+// Ajustes de inventario ya aplicados, por identificador de formulario (evita sumar dos veces).
+const inventoryRequestCache = createIdempotencyCache();
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
@@ -15444,35 +15447,53 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
     return res.status(400).json({ error: 'Stock minimo no puede ser mayor al maximo' });
   }
 
-  let connection;
-  let result;
-  try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-    const resolvedCajaId = requestedCajaId && requestedCajaId > 0
-      ? requestedCajaId
-      : await resolveCurrentCajaIdForUser(authUserId, connection);
-    result = await applyInventoryDelta({
-      connection, code, delta,
-      fields: { minQty, maxQty, useInventory, cost, salePrice, profit },
-      movementType: movementTypeInput, movementNote, cajaId: resolvedCajaId, userId: authUserId,
-    });
-    await connection.commit();
-  } catch (err) {
-    if (connection) {
-      try { await connection.rollback(); } catch (_) {}
+  const performAdjustment = async () => {
+    let connection;
+    try {
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      const resolvedCajaId = requestedCajaId && requestedCajaId > 0
+        ? requestedCajaId
+        : await resolveCurrentCajaIdForUser(authUserId, connection);
+      const applied = await applyInventoryDelta({
+        connection, code, delta,
+        fields: { minQty, maxQty, useInventory, cost, salePrice, profit },
+        movementType: movementTypeInput, movementNote, cajaId: resolvedCajaId, userId: authUserId,
+      });
+      await connection.commit();
+      return applied;
+    } catch (err) {
+      if (connection) {
+        try { await connection.rollback(); } catch (_) {}
+      }
+      throw err;
+    } finally {
+      if (connection) connection.release();
     }
+  };
+
+  // Mismo formulario enviado dos veces (doble clic, Enter + clic): se aplica una sola vez.
+  const requestId = normalizeRequestId(body.request_id);
+  let result;
+  let duplicate = false;
+  try {
+    if (requestId) {
+      const outcome = await inventoryRequestCache.run(`${code}|${requestId}`, performAdjustment);
+      result = outcome.value;
+      duplicate = outcome.duplicate;
+    } else {
+      result = await performAdjustment();
+    }
+  } catch (err) {
     if (err.status) {
       return res.status(err.status).json({ error: err.message, code: err.code, cantidad_actual: err.cantidad_actual });
     }
     console.error('Error al actualizar inventario:', err);
     return res.status(500).json({ error: 'No se pudo actualizar el inventario' });
-  } finally {
-    if (connection) connection.release();
   }
 
   const { product, previousQty, qtyDelta, newQty, movementType, movementLogged } = result;
-  if (movementType === 'ajuste' && qtyDelta !== 0) {
+  if (!duplicate && movementType === 'ajuste' && qtyDelta !== 0) {
     try {
       await sendInventoryAdjustmentEmail({
         codigo_barras: String(product.codigo_barras || code),
@@ -15493,6 +15514,7 @@ app.put('/api/productos/:code/inventory', async (req, res) => {
     cantidad_anterior: previousQty,
     cambio_cantidad: qtyDelta,
     cantidad_actual: newQty,
+    duplicado: duplicate,
   });
 });
 
