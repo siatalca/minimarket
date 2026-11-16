@@ -399,10 +399,6 @@ let salesBarcodeSuggestRows = [];
 let salesBarcodeSuggestActiveIndex = -1;
 const SALES_CAMERA_PERMISSION_KEY = 'sales_camera_permission_prompt_v1';
 let salesCameraPermissionInFlight = false;
-let salesCameraScanStream = null;
-let salesCameraScanRaf = null;
-let salesCameraScanActive = false;
-let salesBarcodeDetector = null;
 let selectedCartIndex = -1;
 let salesPromotionRulesByProduct = new Map();
 let salesComboPromotionRules = [];
@@ -6556,16 +6552,9 @@ function handleSalesBarcodeSelectionChange(value) {
 }
 window.handleSalesBarcodeSelectionChange = handleSalesBarcodeSelectionChange;
 
-function isLikelyMobileDeviceForCameraPrompt() {
-    const ua = String(navigator.userAgent || '').toLowerCase();
-    const mobileUa = /(android|iphone|ipad|ipod|mobile)/i.test(ua);
-    const touchCapable = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    const narrowScreen = window.matchMedia && window.matchMedia('(max-width: 1024px)').matches;
-    return mobileUa || (touchCapable && narrowScreen);
-}
-
+// isLikelyMobileDeviceForCameraPrompt y el escáner de cámara viven en js/camera_barcode_scanner.js.
 async function ensureSalesCameraPermissionPromptOnce() {
-    if (!isLikelyMobileDeviceForCameraPrompt()) return;
+    if (typeof isLikelyMobileDeviceForCameraPrompt !== 'function' || !isLikelyMobileDeviceForCameraPrompt()) return;
     if (salesCameraPermissionInFlight) return;
     const alreadyPrompted = String(localStorage.getItem(SALES_CAMERA_PERMISSION_KEY) || '');
     if (alreadyPrompted === 'done' || alreadyPrompted === 'attempted') return;
@@ -6602,115 +6591,11 @@ function setupSalesMobileCameraPermissionHook() {
     input.addEventListener('click', requestPermission);
 }
 
-function setupSalesCameraScanButtonVisibility() {
-    const btn = document.getElementById('sales-camera-scan-btn');
-    if (!btn) return;
-    btn.style.display = isLikelyMobileDeviceForCameraPrompt() ? 'inline-flex' : 'none';
-}
-
-function getSalesCameraPermissionHelpText() {
-    const ua = String(navigator.userAgent || '').toLowerCase();
-    const insecureMobile = isLikelyMobileDeviceForCameraPrompt() && String(window.location.protocol || '') !== 'https:' && String(window.location.hostname || '').toLowerCase() !== 'localhost';
-    if (insecureMobile) {
-        return 'En móviles, la cámara requiere HTTPS. Abre esta app con https:// (no http://IP). Luego vuelve a intentar el escáner.';
-    }
-    if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('safari')) {
-        return 'Safari: toca el candado de la barra de direcciones, entra a Configuración del sitio y cambia Cámara a Permitir. Si sigue bloqueado, abre Ajustes > Safari > Cámara > Permitir.';
-    }
-    if (ua.includes('android') && ua.includes('chrome')) {
-        return 'Chrome Android: toca el candado de la barra de direcciones > Permisos > Cámara > Permitir. Luego vuelve a esta pantalla y pulsa Reintentar escáner.';
-    }
-    return 'En el navegador, abre el candado del sitio y habilita Cámara en Permitir. Luego vuelve y pulsa Reintentar escáner.';
-}
-
-function openSalesCameraPermissionPopup(reasonText) {
-    const popup = document.getElementById('salesCameraPermissionPopUp');
-    if (!popup) return;
-    const reasonEl = document.getElementById('sales-camera-permission-reason');
-    const helpEl = document.getElementById('sales-camera-permission-help');
-    if (reasonEl) {
-        reasonEl.textContent = String(reasonText || 'Se requiere permiso de cámara para escanear códigos.');
-    }
-    if (helpEl) {
-        helpEl.textContent = getSalesCameraPermissionHelpText();
-    }
-    popup.classList.remove('hidden');
-    popup.style.display = 'flex';
-}
-window.openSalesCameraPermissionPopup = openSalesCameraPermissionPopup;
-
-function closeSalesCameraPermissionPopup() {
-    const popup = document.getElementById('salesCameraPermissionPopUp');
-    if (!popup) return;
-    popup.classList.add('hidden');
-    popup.style.display = '';
-    focusBarcodeInputForNextScan();
-}
-window.closeSalesCameraPermissionPopup = closeSalesCameraPermissionPopup;
-
-async function requestSalesCameraPermissionFromPopup() {
-    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-        openSalesCameraPermissionPopup('Tu navegador no soporta acceso a cámara desde esta página.');
-        return;
-    }
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' } },
-            audio: false,
-        });
-        try {
-            const tracks = stream?.getTracks?.() || [];
-            tracks.forEach((track) => {
-                try { track.stop(); } catch (_) {}
-            });
-        } catch (_) {}
-        localStorage.setItem(SALES_CAMERA_PERMISSION_KEY, 'done');
-        closeSalesCameraPermissionPopup();
-        setSalesCameraScanStatus('Permiso concedido. Puedes iniciar el escáner.');
-    } catch (_) {
-        openSalesCameraPermissionPopup('El permiso de cámara sigue bloqueado. Habilítalo en permisos del sitio y vuelve a intentar.');
-    }
-}
-window.requestSalesCameraPermissionFromPopup = requestSalesCameraPermissionFromPopup;
-
-function setSalesCameraScanStatus(message) {
-    const el = document.getElementById('sales-camera-status');
-    if (el) {
-        el.textContent = String(message || '');
-    }
-}
-
-function stopSalesCameraStream() {
-    if (salesCameraScanRaf) {
-        cancelAnimationFrame(salesCameraScanRaf);
-        salesCameraScanRaf = null;
-    }
-    if (salesCameraScanStream) {
-        try {
-            const tracks = salesCameraScanStream.getTracks?.() || [];
-            tracks.forEach((track) => {
-                try { track.stop(); } catch (_) {}
-            });
-        } catch (_) {}
-        salesCameraScanStream = null;
-    }
-    salesCameraScanActive = false;
-    const video = document.getElementById('sales-camera-video');
-    if (video) {
-        try {
-            video.pause();
-            video.srcObject = null;
-        } catch (_) {}
-    }
-}
-
+// Ventas usa el escáner común (js/camera_barcode_scanner.js). Se mantienen estos nombres globales.
 function closeSalesCameraScanPopup() {
-    stopSalesCameraStream();
-    const popup = document.getElementById('salesCameraScanPopUp');
-    if (!popup) return;
-    popup.classList.add('hidden');
-    popup.style.display = '';
-    focusBarcodeInputForNextScan();
+    if (typeof window.closeCameraBarcodeScanner === 'function') {
+        window.closeCameraBarcodeScanner();
+    }
 }
 window.closeSalesCameraScanPopup = closeSalesCameraScanPopup;
 
@@ -6725,79 +6610,15 @@ async function handleSalesCameraBarcodeDetected(codeValue) {
     await addToCart();
 }
 
-function startSalesCameraDetectionLoop() {
-    if (!salesCameraScanActive) return;
-    const video = document.getElementById('sales-camera-video');
-    if (!video) return;
-
-    const run = async () => {
-        if (!salesCameraScanActive) return;
-        try {
-            if (video.readyState >= 2 && salesBarcodeDetector) {
-                const found = await salesBarcodeDetector.detect(video);
-                if (Array.isArray(found) && found.length > 0) {
-                    const raw = String(found[0]?.rawValue || '').trim();
-                    if (raw) {
-                        await handleSalesCameraBarcodeDetected(raw);
-                        return;
-                    }
-                }
-            }
-        } catch (_) {
-            // noop
-        }
-        salesCameraScanRaf = requestAnimationFrame(run);
-    };
-    salesCameraScanRaf = requestAnimationFrame(run);
-}
-
-async function openSalesCameraScanPopup() {
-    const popup = document.getElementById('salesCameraScanPopUp');
-    const video = document.getElementById('sales-camera-video');
-    if (!popup || !video) return;
-
-    const insecureMobile = isLikelyMobileDeviceForCameraPrompt()
-        && String(window.location.protocol || '') !== 'https:'
-        && String(window.location.hostname || '').toLowerCase() !== 'localhost';
-    if (insecureMobile) {
-        openSalesCameraPermissionPopup('Este móvil está usando HTTP. Para usar cámara debes abrir la app en HTTPS.');
+function openSalesCameraScanPopup() {
+    if (typeof window.openCameraBarcodeScanner !== 'function') {
+        console.error('Escáner de cámara no disponible: falta js/camera_barcode_scanner.js');
         return;
     }
-
-    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-        openSalesCameraPermissionPopup('Este navegador no soporta acceso a cámara desde esta página.');
-        return;
-    }
-
-    popup.classList.remove('hidden');
-    popup.style.display = 'flex';
-    setSalesCameraScanStatus('Solicitando acceso a cámara...');
-
-    try {
-        await ensureSalesCameraPermissionPromptOnce();
-        salesCameraScanStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'environment' } },
-            audio: false,
-        });
-        video.srcObject = salesCameraScanStream;
-        await video.play().catch(() => {});
-
-        if ('BarcodeDetector' in window) {
-            if (!salesBarcodeDetector) {
-                salesBarcodeDetector = new window.BarcodeDetector({
-                    formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'],
-                });
-            }
-            salesCameraScanActive = true;
-            setSalesCameraScanStatus('Apunta al código de barras para escanear.');
-            startSalesCameraDetectionLoop();
-        } else {
-            setSalesCameraScanStatus('Tu navegador no soporta lectura automática de códigos con cámara.');
-        }
-    } catch (_) {
-        closeSalesCameraScanPopup();
-        openSalesCameraPermissionPopup('No se pudo acceder a la cámara. Revisa permisos del navegador para este sitio.');
-    }
+    window.openCameraBarcodeScanner({
+        onDetected: handleSalesCameraBarcodeDetected,
+        onClose: () => focusBarcodeInputForNextScan(),
+    });
 }
 window.openSalesCameraScanPopup = openSalesCameraScanPopup;
 
@@ -7416,15 +7237,15 @@ function closePopupById(popupId) {
             return true;
         }
         break;
-    case 'salesCameraScanPopUp':
-        if (typeof closeSalesCameraScanPopup === 'function') {
-            closeSalesCameraScanPopup();
+    case 'cameraBarcodeScanPopUp':
+        if (typeof window.closeCameraBarcodeScanner === 'function') {
+            window.closeCameraBarcodeScanner();
             return true;
         }
         break;
-    case 'salesCameraPermissionPopUp':
-        if (typeof closeSalesCameraPermissionPopup === 'function') {
-            closeSalesCameraPermissionPopup();
+    case 'cameraBarcodePermissionPopUp':
+        if (typeof window.closeCameraBarcodeNotice === 'function') {
+            window.closeCameraBarcodeNotice();
             return true;
         }
         break;
@@ -16256,7 +16077,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateSalesSessionStrip();
     refreshLastSalesTicketInfoCard().catch(() => {});
     setupSalesMobileCameraPermissionHook();
-    setupSalesCameraScanButtonVisibility();
     if (document.getElementById('inventory-code-input')) {
         clearInventoryView();
     }
@@ -16277,9 +16097,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 if (!isLoginBootstrapPage()) {
-    window.addEventListener('resize', setupSalesCameraScanButtonVisibility);
-    window.addEventListener('orientationchange', setupSalesCameraScanButtonVisibility);
-
     window.addEventListener('focus', refreshSuppliersOnProductContext);
     window.addEventListener('minimarket:suppliers-updated', refreshSuppliersOnProductContext);
     window.addEventListener('message', (event) => {

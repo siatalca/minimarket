@@ -11,7 +11,7 @@
     <!-- Único CSS optimizado -->
     <link rel="stylesheet" href="./css/root.css">
     <link rel="stylesheet" href="./css/styleshome.css?v=20260320b">
-    <link rel="stylesheet" href="./css/panel.css?v=20260923a">
+    <link rel="stylesheet" href="./css/panel.css?v=20261116i">
     <link rel="stylesheet" href="./css/popup.css?v=20260320a">
 
     <script src="./js/api_base.js?v=20261003a"></script>

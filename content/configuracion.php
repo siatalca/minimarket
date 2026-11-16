@@ -133,15 +133,7 @@
                     <span>Cajon&nbsp;dinero</span>
                 </li>
             </ul>
-            <div class="panel-upcoming">
-                <h4 class="panel-upcoming-title">Mejoras en camino</h4>
-                <ul class="panel-grid panel-grid-upcoming">
-                    <li class="panel-item panel-item-disabled" data-upcoming="Permitira usar la camara del celular para leer codigos de barras cuando abras el sistema en modo movil, con permisos y validaciones de calidad de lectura.">
-                        <img src="https://cdn-icons-gif.flaticon.com/13896/13896425.gif" alt="">
-                        <span>Camara<br>movil<br><small>Proximamente</small></span>
-                    </li>
-                </ul>
-            </div>
+            <!-- «Cámara móvil» ya está disponible: botón «Escanear cámara» en Ventas, Productos, Inventario y Compras (M-033). -->
         </div>
 
         <!-- ---------- Servicios ---------- -->

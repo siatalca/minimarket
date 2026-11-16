@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="./css/panel.css?v=20260320k">
+<link rel="stylesheet" href="./css/panel.css?v=20261116i">
 
 <div id="products-panel" class="panel">
     <h1>Productos</h1>
@@ -18,7 +18,7 @@
         <div class="promo-layout">
             <div class="promo-column">
                 <h4 class="panel-upcoming-title" style="margin-bottom:8px;">Datos del producto</h4>
-                <div class="form-row"><label>C&oacute;digo de barras</label><input type="text" id="product-code" placeholder="C&oacute;digo de barras"></div>
+                <div class="form-row camera-scan-row"><label for="product-code">C&oacute;digo de barras</label><div class="camera-scan-field"><input type="text" id="product-code" placeholder="C&oacute;digo de barras"><button class="btn camera-scan-btn" type="button" data-camera-scan-target="product-code" style="display:none;">Escanear c&aacute;mara</button></div></div>
                 <div class="form-row"><label for="product-name">Descripci&oacute;n</label><input type="text" id="product-name" placeholder="Descripci&oacute;n"></div>
                 <div class="form-row">
                     <label>Se vende</label>

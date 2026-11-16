@@ -18,16 +18,19 @@
                 <button class="btn" type="button" onclick="loadShoppingOrderActive()">Recargar lista</button>
             </div>
 
-            <div class="form-row">
+            <div class="form-row camera-scan-row">
                 <label for="shopping-product-input">Escanear o buscar producto</label>
-                <input
-                    id="shopping-product-input"
-                    type="text"
-                    list="shopping-product-options"
-                    autocomplete="off"
-                    placeholder="Escanea c&oacute;digo o escribe descripci&oacute;n y presiona Enter"
-                    oninput="shoppingSuggestProducts(this.value)"
-                    onkeydown="if(event.key==='Enter'){event.preventDefault();addShoppingItemFromInput();}">
+                <div class="camera-scan-field">
+                    <input
+                        id="shopping-product-input"
+                        type="text"
+                        list="shopping-product-options"
+                        autocomplete="off"
+                        placeholder="Escanea c&oacute;digo o escribe descripci&oacute;n y presiona Enter"
+                        oninput="shoppingSuggestProducts(this.value)"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();addShoppingItemFromInput();}">
+                    <button class="btn camera-scan-btn" type="button" data-camera-scan-target="shopping-product-input" style="display:none;">Escanear c&aacute;mara</button>
+                </div>
             </div>
             <div id="shopping-feedback" class="product-status-box">Escanea un producto para agregarlo a la orden de compra.</div>
 

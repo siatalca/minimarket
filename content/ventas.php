@@ -18,7 +18,7 @@
             <div id="sales-barcode-suggest-panel" class="sales-barcode-suggest-panel hidden" role="listbox" aria-label="Sugerencias de productos"></div>
         </div>
         <button id="searchCode" type="button" class="btn sales-scan-btn" onclick="addToCart()">ENTER - Agregar producto</button>
-        <button id="sales-camera-scan-btn" class="btn sales-scan-btn sales-mobile-camera-btn" type="button" onclick="openSalesCameraScanPopup()">Escanear cámara</button>
+        <button id="sales-camera-scan-btn" class="btn sales-scan-btn sales-mobile-camera-btn camera-scan-btn" type="button" onclick="openSalesCameraScanPopup()">Escanear cámara</button>
     </div>
     <div class="sales-pending-inline-strip hidden">
         <div id="sales-pending-ticket-strip" class="sales-pending-inline-track" aria-label="Lista de tickets pendientes"></div>
@@ -567,46 +567,7 @@
             </div>
         </div>
     </div>
-    <div id="salesCameraScanPopUp" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; align-items:center; justify-content:center;">
-        <div class="contenidoPopUp" style="width:min(560px,95vw); max-width:560px; margin:0; display:flex; flex-direction:column;">
-            <div class="popup-titulo">
-                <p class="popup-titulo-texto">Escanear código con cámara</p>
-                <button class="popup-cerrar" type="button" onclick="closeSalesCameraScanPopup()">
-                    <p>X</p>
-                </button>
-            </div>
-            <div class="popup-body" style="padding:10px; display:flex; flex-direction:column; gap:8px;">
-                <video id="sales-camera-video" autoplay playsinline muted style="width:100%; max-height:56vh; background:#0b1220; border:1px solid #334155; border-radius:8px;"></video>
-                <div id="sales-camera-status" class="product-status-box">Apunta al código de barras para escanear.</div>
-                <div style="display:flex; justify-content:flex-end; gap:8px;">
-                    <button class="btn2" type="button" onclick="closeSalesCameraScanPopup()" style="height:32px; min-width:120px;">Cerrar</button>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div id="salesCameraPermissionPopUp" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:10000; align-items:center; justify-content:center;">
-        <div class="contenidoPopUp" style="width:min(560px,95vw); max-width:560px; margin:0; display:flex; flex-direction:column;">
-            <div class="popup-titulo">
-                <p class="popup-titulo-texto">Permiso de cámara</p>
-                <button class="popup-cerrar" type="button" onclick="closeSalesCameraPermissionPopup()">
-                    <p>X</p>
-                </button>
-            </div>
-            <div class="popup-body" style="padding:10px; display:flex; flex-direction:column; gap:10px;">
-                <div id="sales-camera-permission-reason" class="product-status-box">
-                    Se requiere permiso de cámara para escanear códigos.
-                </div>
-                <div id="sales-camera-permission-help" style="font-size:13px; line-height:1.45; color:#334155; background:#f8fafc; border:1px solid #dbe5f1; border-radius:8px; padding:8px 10px;">
-                    Revisa permisos del sitio en tu navegador.
-                </div>
-                <div style="display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
-                    <button class="btn2" type="button" onclick="requestSalesCameraPermissionFromPopup()" style="height:32px; min-width:150px;">Solicitar permiso</button>
-                    <button class="btn2" type="button" onclick="openSalesCameraScanPopup()" style="height:32px; min-width:150px;">Reintentar escáner</button>
-                    <button class="btn2" type="button" onclick="closeSalesCameraPermissionPopup()" style="height:32px; min-width:110px;">Cerrar</button>
-                </div>
-            </div>
-        </div>
-    </div>
+    <!-- El popup de la cámara lo crea js/camera_barcode_scanner.js (común a Ventas, Productos, Inventario y Compras). -->
 </div>
 <div class="sales-bottom-hint">Punto de venta: teclee o escanee el código del producto.</div>
 </div>

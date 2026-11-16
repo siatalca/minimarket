@@ -4169,3 +4169,52 @@ body.dark #sales .sales-pending-empty {
     line-height: 1.25;
     color: #334155;
 }
+
+/* Campo de código + botón «Escanear cámara» (Productos, Inventario, Compras). El botón solo se ve en móvil. */
+.camera-scan-field {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 0%;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.camera-scan-field > input {
+    flex: 1 1 160px;
+    min-width: 0;
+}
+
+/* En escritorio el código de Productos conserva su ancho de 240px (el botón está oculto). */
+@media (min-width: 641px) {
+    #products-panel .camera-scan-field > #product-code {
+        flex: 0 1 240px;
+    }
+}
+
+/* En pantallas angostas la fila del código pasa a una columna para que quepan campo y botón. */
+@media (max-width: 640px) {
+    #products-panel #add .form-row.camera-scan-row,
+    #inventory-panel #inventory-nuevo-content .form-row.camera-scan-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .form-row.camera-scan-row > .camera-scan-field {
+        flex-basis: 100%;
+    }
+}
+
+.camera-scan-field > .camera-scan-btn {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 0;
+    height: 40px;
+    margin: 0;
+    padding: 0 12px;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    font-weight: 700;
+}

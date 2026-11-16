@@ -12,16 +12,19 @@
     <div id="inventory-nuevo-content" class="hidden">
         <section class="inventory-section">
             <h3>Consulta por c&oacute;digo</h3>
-            <div class="form-row">
-                <label>Escanear o ingresar c&oacute;digo</label>
-                <input
-                    type="text"
-                    id="inventory-code-input"
-                    list="inventory-search-options"
-                    placeholder="Escanea c&oacute;digo o escribe nombre del producto"
-                    oninput="inventorySearchSuggest(this.value)"
-                    onkeydown="if(event.key==='Enter'){event.preventDefault();loadInventoryProductByCode();}"
-                >
+            <div class="form-row camera-scan-row">
+                <label for="inventory-code-input">Escanear o ingresar c&oacute;digo</label>
+                <div class="camera-scan-field">
+                    <input
+                        type="text"
+                        id="inventory-code-input"
+                        list="inventory-search-options"
+                        placeholder="Escanea c&oacute;digo o escribe nombre del producto"
+                        oninput="inventorySearchSuggest(this.value)"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();loadInventoryProductByCode();}"
+                    >
+                    <button class="btn camera-scan-btn" type="button" data-camera-scan-target="inventory-code-input" style="display:none;">Escanear c&aacute;mara</button>
+                </div>
             </div>
             <div class="form-row form-actions">
                 <button class="btn inv-btn-search" type="button" onclick="loadInventoryProductByCode()">Buscar</button>
