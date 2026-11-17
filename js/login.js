@@ -282,10 +282,14 @@ function showRestrictedReservationView(serverData = null) {
   if (owner) window.MinimarketSessionReservation.renderReservationOwner(owner, displayReservation);
   const summary = document.getElementById('reserved-session-shift-summary');
   const closeButton = document.getElementById('close-restricted-shift');
-  if (summary) summary.textContent = serverData?.shift
+  if (summary) summary.textContent = restrictedCloseSession && serverData?.shift
     ? `Caja ${serverData.shift.caja_id}, turno ${serverData.shift.id}. El cierre se atribuirá al cajero original.`
-    : 'No hay un turno activo disponible para cierre administrativo.';
+    : 'No hay un turno de este usuario que se pueda cerrar desde aquí. Solo puedes liberar la reserva local de este equipo.';
   if (closeButton) closeButton.classList.toggle('hidden', !restrictedCloseSession);
+  ['restricted-declared-cash', 'restricted-declared-card'].forEach((id) => {
+    const input = document.getElementById(id);
+    if (input) input.disabled = !restrictedCloseSession;
+  });
   if (panel) panel.classList.remove('hidden');
 }
 

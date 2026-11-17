@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { isUserActive } = require('./user_status');
 
 const RESERVATION_SCOPE = 'session_reservation';
 const RESERVATION_ISSUER = 'minimarket';
@@ -75,26 +76,27 @@ function isVerifiedAdminSia(user = {}) {
     && Number(user.es_administrador || 0) === 1;
 }
 
-// El login ya rechaza a los usuarios desactivados antes de llegar aqui.
-function isAdministrator(user = {}) {
-  return Number(user.es_administrador || 0) === 1;
+// Administrador activo: es_administrador = 1 y no desactivado (activo NULL o ausente cuenta como activo).
+function isActiveAdministrator(user = {}) {
+  return Number(user.es_administrador || 0) === 1 && isUserActive(user);
 }
 
 // Decide el acceso al iniciar sesion en un equipo/caja:
-// - 'admin_restricted' (cierre restringido, solo admin_sia): la caja de ESTE equipo quedo tomada por otro
-//   usuario (reserva local valida de otro) o la reserva local es invalida.
+// - 'admin_restricted' (cierre restringido, cualquier administrador activo): la caja de ESTE equipo quedo
+//   tomada por otro usuario (reserva local valida de otro) o la reserva local es invalida. Solo es posible
+//   desde el equipo que tiene la reserva, porque la reserva va firmada con la huella del equipo.
 // - 'admin_review': solo hay un turno abierto de otra persona en la caja y el usuario es administrador;
 //   entra normal a revisar, pero el servidor no le deja vender, abrir ni cerrar caja en esa caja.
 // - 'deny': cualquier otro usuario con reserva o turno ajeno.
 function decideReservationAccess({ reservation = null, reservationInvalid = false, openShiftOwnerId = 0, user = {} } = {}) {
-  if (reservationInvalid) return isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny';
+  if (reservationInvalid) return isActiveAdministrator(user) ? 'admin_restricted' : 'deny';
   const userId = Number(user.id || 0);
   const reservationOwnerId = Number(reservation?.ownerId || 0);
   const shiftOwnerId = Number(openShiftOwnerId || 0);
   const conflictsWithReservation = reservationOwnerId > 0 && reservationOwnerId !== userId;
   const conflictsWithShift = shiftOwnerId > 0 && shiftOwnerId !== userId;
-  if (conflictsWithReservation) return isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny';
-  if (conflictsWithShift) return isAdministrator(user) ? 'admin_review' : 'deny';
+  if (conflictsWithReservation) return isActiveAdministrator(user) ? 'admin_restricted' : 'deny';
+  if (conflictsWithShift) return isActiveAdministrator(user) ? 'admin_review' : 'deny';
   return reservationOwnerId || shiftOwnerId ? 'owner' : 'unreserved';
 }
 
@@ -124,15 +126,16 @@ function createRestrictedCloseCapability(input = {}, { secret, expiresIn = '5m',
   const ownerId = Number(input.ownerId || 0);
   const deviceHash = String(input.deviceHash || '').trim();
   const reservationToken = String(input.reservationToken || '').trim();
-  if (!adminId || String(input.adminLogin || '').trim().toLowerCase() !== 'admin_sia'
-      || Number(input.adminRole || 0) !== 1 || !cajaId || !shiftId || !ownerId
+  const adminLogin = String(input.adminLogin || '').trim();
+  // Cualquier administrador; al usar la capacidad el servidor vuelve a comprobarlo en la base.
+  if (!adminId || !adminLogin || Number(input.adminRole || 0) !== 1 || !cajaId || !shiftId || !ownerId
       || !deviceHash || !reservationToken) {
     throw new Error('Datos incompletos para capacidad de cierre restringido');
   }
   return jwt.sign({
     scope: RESTRICTED_CLOSE_SCOPE,
     admin_id: adminId,
-    admin_login: 'admin_sia',
+    admin_login: adminLogin,
     admin_role: 1,
     caja_id: cajaId,
     shift_id: shiftId,
@@ -154,6 +157,7 @@ function verifyRestrictedCloseCapability(token, expected = {}) {
   });
   const claims = {
     adminId: Number(payload.admin_id || 0),
+    adminLogin: String(payload.admin_login || '').trim(),
     cajaId: Number(payload.caja_id || 0),
     shiftId: Number(payload.shift_id || 0),
     ownerId: Number(payload.owner_id || 0),
@@ -162,7 +166,7 @@ function verifyRestrictedCloseCapability(token, expected = {}) {
     jti: String(payload.jti || ''),
     exp: Number(payload.exp || 0),
   };
-  if (payload.scope !== RESTRICTED_CLOSE_SCOPE || payload.admin_login !== 'admin_sia'
+  if (payload.scope !== RESTRICTED_CLOSE_SCOPE || !claims.adminLogin
       || Number(payload.admin_role || 0) !== 1 || !claims.jti) {
     throw new Error('Capacidad de cierre invalida');
   }
@@ -178,6 +182,29 @@ function verifyRestrictedCloseCapability(token, expected = {}) {
     throw new Error('Capacidad fuera de alcance');
   }
   return claims;
+}
+
+// La capacidad de cierre se emite SOLO con una reserva local VALIDA (ya verificada contra la huella del equipo
+// y la caja) cuyo dueno es el mismo usuario del turno abierto: solo se cierra el turno de quien dejo la sesion
+// en ese PC. Con reserva invalida no hay capacidad (solo se puede liberar la reserva local del navegador).
+function shouldIssueRestrictedCloseCapability({
+  reservation = null, reservationInvalid = false, reservationToken = '', deviceHash = '', openShiftOwner = null,
+} = {}) {
+  if (reservationInvalid || !reservation) return false;
+  if (!String(reservationToken || '').trim() || !String(deviceHash || '').trim()) return false;
+  const shiftId = Number(openShiftOwner?.shiftId || 0);
+  const shiftOwnerId = Number(openShiftOwner?.id || 0);
+  return shiftId > 0 && shiftOwnerId > 0 && Number(reservation.ownerId || 0) === shiftOwnerId;
+}
+
+// Al usar la capacidad: la fila actual del administrador en la base debe seguir siendo el mismo usuario
+// (id y login), activo y con es_administrador = 1. No basta con lo que dice el token.
+function isCapabilityAdminStillValid(adminRow, claims = {}) {
+  if (!adminRow) return false;
+  const sameId = Number(adminRow.id || 0) > 0 && Number(adminRow.id) === Number(claims.adminId || 0);
+  const rowLogin = String(adminRow.user || '').trim().toLowerCase();
+  const sameLogin = Boolean(rowLogin) && rowLogin === String(claims.adminLogin || '').trim().toLowerCase();
+  return sameId && sameLogin && isActiveAdministrator(adminRow);
 }
 
 class RestrictedCloseReplayGuard {
@@ -200,6 +227,9 @@ module.exports = {
   verifyReservationToken,
   decideReservationAccess,
   isVerifiedAdminSia,
+  isActiveAdministrator,
+  isCapabilityAdminStillValid,
+  shouldIssueRestrictedCloseCapability,
   buildRestrictedLoginResponse,
   createRestrictedCloseCapability,
   verifyRestrictedCloseCapability,

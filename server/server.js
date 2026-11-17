@@ -14,7 +14,8 @@ const {
   createReservationToken,
   verifyReservationToken,
   decideReservationAccess,
-  isVerifiedAdminSia,
+  isCapabilityAdminStillValid,
+  shouldIssueRestrictedCloseCapability,
   buildRestrictedLoginResponse,
   createRestrictedCloseCapability,
   verifyRestrictedCloseCapability,
@@ -14146,7 +14147,6 @@ app.post('/api/auth/verify-admin', async (req, res) => {
   }
 });
 
-+
 app.post('/api/restricted-session/close-shift', async (req, res) => {
   const capability = String(req.body?.close_capability || '').trim();
   const reservationToken = String(req.body?.reservation_token || '').trim();
@@ -14171,20 +14171,22 @@ app.post('/api/restricted-session/close-shift', async (req, res) => {
   try {
     await connection.beginTransaction();
     const [adminRows] = await connection.query(
-      `SELECT id, user, es_administrador FROM usuarios WHERE id = ? LIMIT 1 FOR UPDATE`,
+      `SELECT id, user, es_administrador, activo FROM usuarios WHERE id = ? LIMIT 1 FOR UPDATE`,
       [claims.adminId]
     );
-    if (!adminRows.length || !isVerifiedAdminSia(adminRows[0])) {
+    // Se vuelve a comprobar en la base: mismo usuario, activo y administrador (no basta el token).
+    if (!isCapabilityAdminStillValid(adminRows[0], claims)) {
       await connection.rollback();
       return res.status(403).json({ message: 'Administrador no autorizado' });
     }
+    const adminLoginForAudit = String(adminRows[0].user || '').trim().slice(0, 60);
     const result = await closeShiftCore({
       database: connection, cajaId: claims.cajaId, cajeroId: claims.ownerId,
       expectedShiftId: claims.shiftId,
       montoDeclaradoInput: toNumber(req.body?.monto_declarado ?? 0),
       montoDeclaradoTarjetaInput: toNumber(req.body?.monto_declarado_tarjeta ?? 0),
       observaciones: null,
-      auditNote: `Cierre administrativo por admin_sia (usuario ${claims.adminId})`,
+      auditNote: `Cierre administrativo por ${adminLoginForAudit} (usuario ${claims.adminId})`,
       lock: true,
       sql: { cashAmount: buildCashAmountSql, cardAmount: buildCardAmountSql,
         mixedCondition: buildMixedSaleConditionSql, sumMovementAmounts,
@@ -14367,7 +14369,11 @@ app.post('/api/login', async (req, res) => {
         const hashed = await bcrypt.hash(passwordInput, 12);
         await db.query('UPDATE usuarios SET contrasena = ? WHERE id = ?', [hashed, user.id]);
       }
-      const closeCapability = reservationTokenInput && deviceHash && openShiftOwner?.shiftId
+      // Solo con reserva VALIDA de este equipo y del mismo usuario del turno abierto (nunca con reserva invalida).
+      const canIssueCloseCapability = shouldIssueRestrictedCloseCapability({
+        reservation, reservationInvalid, reservationToken: reservationTokenInput, deviceHash, openShiftOwner,
+      });
+      const closeCapability = canIssueCloseCapability
         ? createRestrictedCloseCapability({
             adminId: Number(user.id), adminLogin: user.user, adminRole: user.es_administrador,
             cajaId, shiftId: openShiftOwner.shiftId, ownerId: openShiftOwner.id,
@@ -14378,7 +14384,7 @@ app.post('/api/login', async (req, res) => {
         ...buildRestrictedLoginResponse({ reservedOwner, cajaId }),
         close_capability: closeCapability,
         admin_id: Number(user.id),
-        shift: openShiftOwner ? { id: openShiftOwner.shiftId, owner_id: openShiftOwner.id, caja_id: cajaId } : null,
+        shift: closeCapability ? { id: openShiftOwner.shiftId, owner_id: openShiftOwner.id, caja_id: cajaId } : null,
       });
     }
 

@@ -63,7 +63,7 @@ test('permite al dueño y rechaza cualquier otra cuenta normal', () => {
   }), 'deny');
 });
 
-test('solo admin_sia con rol administrador obtiene acceso restringido', () => {
+test('cualquier administrador activo obtiene acceso restringido sobre la reserva de otro', () => {
   assert.equal(decideReservationAccess({
     reservation,
     user: { id: 1, user: 'admin_sia', es_administrador: 1 },
@@ -77,6 +77,11 @@ test('solo admin_sia con rol administrador obtiene acceso restringido', () => {
   assert.equal(decideReservationAccess({
     reservation,
     user: { id: 2, user: 'otro_admin', es_administrador: 1 },
+  }), 'admin_restricted');
+
+  assert.equal(decideReservationAccess({
+    reservation,
+    user: { id: 2, user: 'otro_admin', es_administrador: 1, activo: 0 },
   }), 'deny');
 });
 
@@ -120,7 +125,7 @@ test('la caja tomada por otro usuario (reserva local) mantiene el cierre restrin
     reservation,
     openShiftOwnerId: 17,
     user: { id: 2, user: 'otro_admin', es_administrador: 1 },
-  }), 'deny');
+  }), 'admin_restricted');
 
   assert.equal(decideReservationAccess({
     reservation,
@@ -129,7 +134,7 @@ test('la caja tomada por otro usuario (reserva local) mantiene el cierre restrin
   }), 'deny');
 });
 
-test('una reserva local inválida sigue igual: solo admin_sia obtiene acceso restringido', () => {
+test('una reserva local inválida: cualquier administrador activo obtiene acceso restringido, cajero no', () => {
   assert.equal(decideReservationAccess({
     reservationInvalid: true,
     openShiftOwnerId: 17,
@@ -139,7 +144,7 @@ test('una reserva local inválida sigue igual: solo admin_sia obtiene acceso res
   assert.equal(decideReservationAccess({
     reservationInvalid: true,
     user: { id: 2, user: 'otro_admin', es_administrador: 1 },
-  }), 'deny');
+  }), 'admin_restricted');
 
   assert.equal(decideReservationAccess({
     reservationInvalid: true,
