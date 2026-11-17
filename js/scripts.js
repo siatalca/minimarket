@@ -386,6 +386,8 @@ function setupFrontendErrorReporting() {
 
 let isFinalizingSale = false;
 let shiftStarted = false;
+// Modo revision: turno abierto de otra persona en esta caja (ver applySalesReviewMode).
+let salesReviewModeActive = false;
 let shiftValidationRetryTimer = null;
 let ensureShiftStartedInFlight = null;
 let searchProductsDebounceTimer = null;
@@ -4894,6 +4896,30 @@ function setSalesEnabledByShift(enabled) {
     updateSalesSessionStrip();
 }
 
+// Modo revision: la caja de este equipo tiene el turno abierto de otra persona.
+// Se puede revisar todo, pero no vender ni abrir/cerrar caja (el servidor tambien lo bloquea).
+function applySalesReviewMode(cajaOcupada) {
+    const banner = document.getElementById('sales-review-mode');
+    salesReviewModeActive = Boolean(cajaOcupada);
+    if (!cajaOcupada) {
+        if (banner) {
+            banner.textContent = '';
+            banner.classList.add('hidden');
+        }
+        return false;
+    }
+    shiftStarted = false;
+    setSalesEnabledByShift(false);
+    if (banner) {
+        const caja = String(cajaOcupada.caja_id || localStorage.getItem('n_caja') || '').trim();
+        const owner = String(cajaOcupada.cajero_nombre || '').trim() || 'otro usuario';
+        banner.textContent = String(cajaOcupada.message || '').trim()
+            || `Modo revisión: la caja ${caja} tiene el turno abierto de ${owner}. No puedes vender, abrir ni cerrar caja desde aquí.`;
+        banner.classList.remove('hidden');
+    }
+    return true;
+}
+
 function getSelectedPaymentMethod() {
     const activeTab = document.querySelector('.tabss .tab.active');
     if (activeTab?.dataset?.tab) return activeTab.dataset.tab;
@@ -5347,7 +5373,7 @@ function updateSalesSessionStrip() {
     }
     const cajeroNombre = String(profile?.nombre || profile?.username_login || '').trim();
     const cajeroLabel = cajeroNombre ? `${cajeroNombre} (${cajeroId})` : cajeroId;
-    const turnoLabel = shiftStarted ? 'Abierto' : 'Sin iniciar';
+    const turnoLabel = shiftStarted ? 'Abierto' : (salesReviewModeActive ? 'Modo revisión' : 'Sin iniciar');
 
     if (cajaEl) cajaEl.textContent = caja;
     if (cajeroEl) cajeroEl.textContent = cajeroLabel;
@@ -6027,6 +6053,8 @@ async function ensureShiftStartedOnLoadImpl() {
 
     const session = getActiveCajaCajero();
     if (!session) return;
+    // El modo revision se recalcula en cada validacion: al cerrarse el turno ajeno no queda pegado.
+    applySalesReviewMode(null);
 
     if (localStorage.getItem('turno_id_actual') && !hasLocalShiftContextForCurrentUser()) {
         clearLocalShiftContext();
@@ -6115,6 +6143,9 @@ async function ensureShiftStartedOnLoadImpl() {
         return;
     }
 
+    // Modo revision: no se pide abrir caja mientras el turno sea de otra persona.
+    if (applySalesReviewMode(status.caja_ocupada || null)) return;
+
     setSalesEnabledByShift(false);
     while (true) {
         const answer = (typeof window.appPrompt === 'function')
@@ -6176,6 +6207,9 @@ async function ensureShiftStartedOnLoadImpl() {
             }
             alert(error.message || 'No se pudo iniciar turno.');
             const refresh = await fetchShiftStatus();
+            if (refresh.estado === 'sin_turno' && applySalesReviewMode(refresh.caja_ocupada || null)) {
+                return;
+            }
             if (refresh.estado === 'sesion_invalida') {
                 shiftStarted = false;
                 setSalesEnabledByShift(false);

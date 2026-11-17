@@ -2,7 +2,7 @@
 <script src="./js/ticket_print_method.js?v=20261003b"></script>
 <script src="./js/html_escape.js?v=20261112a"></script>
 <script src="./js/camera_barcode_scanner.js?v=20261116b"></script>
-<script src="./js/scripts.js?v=20261116a"></script>
+<script src="./js/scripts.js?v=20261117a"></script>
 <script src="./js/functions.js?v=20261112b"></script>
 <script src="./js/logout.js?v=20261007a"></script>
 <script src="./js/popup.js?v=20260324a"></script>

@@ -1,4 +1,4 @@
-<link rel="stylesheet" href="./css/panel.css?v=20261116i">
+<link rel="stylesheet" href="./css/panel.css?v=20261117a">
 
 <div id="products-panel" class="panel">
     <h1>Productos</h1>

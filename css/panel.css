@@ -1550,6 +1550,23 @@ body.dark .panel-upcoming-title {
     background: linear-gradient(90deg, #eef4fc 0%, #f8fbff 100%);
 }
 
+/* Modo revision: turno abierto de otra persona en esta caja */
+#sales .sales-review-mode {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: 1px solid #d97706;
+    border-radius: 8px;
+    background: #fef3c7;
+    color: #78350f;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+body.dark #sales .sales-review-mode {
+    background: rgba(217, 119, 6, 0.18);
+    color: #fde68a;
+}
+
 #sales .sales-session-item {
     font-size: 0.84rem;
     color: #334155;

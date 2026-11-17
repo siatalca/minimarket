@@ -27,7 +27,7 @@ async function closeShiftCore({ database, cajaId, cajeroId, expectedShiftId = 0,
      ORDER BY id_corte DESC LIMIT 1${lock ? ' FOR UPDATE' : ''}`,
     [cajaId, cajeroId]
   );
-  if (!existing.length) { const error = new Error('Debe iniciar turno antes de cerrarlo'); error.status = 409; throw error; }
+  if (!existing.length) { const error = new Error('Debe iniciar turno antes de cerrarlo'); error.status = 409; error.code = 'SIN_TURNO_PROPIO'; throw error; }
   const shiftId = Number(existing[0].id_corte || 0);
   if (expectedShiftId && shiftId !== Number(expectedShiftId)) { const error = new Error('El turno reservado ya no esta activo'); error.status = 409; throw error; }
   const start = existing[0].hora_apertura;

@@ -75,16 +75,27 @@ function isVerifiedAdminSia(user = {}) {
     && Number(user.es_administrador || 0) === 1;
 }
 
-function decideReservationAccess({ reservation = null, openShiftOwnerId = 0, user = {} } = {}) {
+// El login ya rechaza a los usuarios desactivados antes de llegar aqui.
+function isAdministrator(user = {}) {
+  return Number(user.es_administrador || 0) === 1;
+}
+
+// Decide el acceso al iniciar sesion en un equipo/caja:
+// - 'admin_restricted' (cierre restringido, solo admin_sia): la caja de ESTE equipo quedo tomada por otro
+//   usuario (reserva local valida de otro) o la reserva local es invalida.
+// - 'admin_review': solo hay un turno abierto de otra persona en la caja y el usuario es administrador;
+//   entra normal a revisar, pero el servidor no le deja vender, abrir ni cerrar caja en esa caja.
+// - 'deny': cualquier otro usuario con reserva o turno ajeno.
+function decideReservationAccess({ reservation = null, reservationInvalid = false, openShiftOwnerId = 0, user = {} } = {}) {
+  if (reservationInvalid) return isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny';
   const userId = Number(user.id || 0);
   const reservationOwnerId = Number(reservation?.ownerId || 0);
   const shiftOwnerId = Number(openShiftOwnerId || 0);
   const conflictsWithReservation = reservationOwnerId > 0 && reservationOwnerId !== userId;
   const conflictsWithShift = shiftOwnerId > 0 && shiftOwnerId !== userId;
-  if (!conflictsWithReservation && !conflictsWithShift) {
-    return reservationOwnerId || shiftOwnerId ? 'owner' : 'unreserved';
-  }
-  return isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny';
+  if (conflictsWithReservation) return isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny';
+  if (conflictsWithShift) return isAdministrator(user) ? 'admin_review' : 'deny';
+  return reservationOwnerId || shiftOwnerId ? 'owner' : 'unreserved';
 }
 
 function buildRestrictedLoginResponse({ reservedOwner = null, cajaId = null } = {}) {

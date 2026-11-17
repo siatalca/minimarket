@@ -6,6 +6,7 @@
         <div class="sales-session-item"><strong>Cajero:</strong> <span id="sales-status-cajero">-</span></div>
         <div class="sales-session-item"><strong>Turno:</strong> <span id="sales-status-turno">Sin iniciar</span></div>
     </div>
+    <p id="sales-review-mode" class="sales-review-mode hidden" role="status"></p>
 
     <h1 class="panel-title">VENTA - Ticket <span id="nticket">1</span></h1>
 

@@ -533,7 +533,7 @@ async function refreshShiftLockMessage() {
     const ownerCaja = String(localStorage.getItem('turno_owner_caja') || '').trim();
     const ownerUser = String(localStorage.getItem('turno_owner_user') || '').trim();
     if (ownerCaja === caja && ownerUser) {
-      msg.textContent = `Caja ${caja} tiene un turno abierto. Solo el cajero del turno abierto puede ingresar hasta cerrar caja.`;
+      msg.textContent = `Caja ${caja} tiene un turno abierto. Solo el cajero del turno abierto puede operar hasta cerrar caja; un administrador puede entrar en modo revisión.`;
       msg.classList.remove('hidden');
     } else if (localStorage.getItem('estado_login') === '1') {
       msg.textContent = 'Hay una sesión activa. Ingresa la contraseña para continuar o cerrar el turno anterior.';
@@ -559,7 +559,7 @@ async function refreshShiftLockMessage() {
       }
       return;
     }
-    msg.textContent = `Caja ${caja} tiene turno abierto por ${data.cajero_nombre || 'otro cajero'}. Solo ese usuario puede ingresar hasta cerrar caja.`;
+    msg.textContent = `Caja ${caja} tiene turno abierto por ${data.cajero_nombre || 'otro cajero'}. Solo ese usuario puede operar hasta cerrar caja; un administrador puede entrar en modo revisión.`;
     msg.classList.remove('hidden');
   } catch (_) {
     if (localStorage.getItem('estado_login') === '1') {

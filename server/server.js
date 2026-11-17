@@ -21,6 +21,7 @@ const {
   RestrictedCloseReplayGuard,
 } = require('./session_reservation_policy');
 const { closeShiftCore } = require('./shift_close_core');
+const { decideShiftOperation, buildReviewModeMessage } = require('./shift_operation_guard');
 const { isUserActive } = require('./user_status');
 const {
   applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, parseStrictQuantity, roundQty,
@@ -474,6 +475,28 @@ async function resolveBranchForCaja(cajaId, connection = db) {
   );
   const branchId = toInt(rows[0]?.sucursal_id);
   return branchId || 1;
+}
+
+// Turno abierto hoy en la caja que pertenece a otro usuario (modo revision), o null.
+async function findOtherOpenShift(cajaId, userId, connection = db) {
+  const cajaNum = toInt(cajaId);
+  if (!cajaNum) return null;
+  const [rows] = await connection.query(
+    `SELECT c.id_corte, c.usuario_id, u.nombre AS cajero_nombre, u.user AS cajero_user
+     FROM corte_caja c
+     LEFT JOIN usuarios u ON u.id = c.usuario_id
+     WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.estado = 'abierto' AND c.usuario_id <> ?
+     ORDER BY c.id_corte DESC
+     LIMIT 1`,
+    [cajaNum, toInt(userId) || 0]
+  );
+  if (!rows.length) return null;
+  return {
+    shiftId: Number(rows[0].id_corte || 0),
+    id: Number(rows[0].usuario_id || 0),
+    name: String(rows[0].cajero_nombre || '').trim(),
+    login: String(rows[0].cajero_user || '').trim(),
+  };
 }
 
 function normalizeFolioPrefix(value) {
@@ -11371,6 +11394,17 @@ app.get('/api/turno/estado', async (req, res) => {
       });
     }
 
+    // Modo revision: la caja tiene el turno abierto de otra persona; la pantalla de Ventas no debe pedir abrir caja.
+    const otherShift = await findOtherOpenShift(cajaId, cajeroId);
+    const cajaOcupada = otherShift
+      ? {
+          caja_id: cajaId,
+          usuario_id: otherShift.id,
+          cajero_nombre: otherShift.name || otherShift.login,
+          message: buildReviewModeMessage({ cajaId, owner: otherShift }),
+        }
+      : null;
+
     const [lastRows] = await db.query(
       `SELECT id_corte, estado, monto_inicial, hora_apertura, hora_cierre
        FROM corte_caja
@@ -11381,7 +11415,7 @@ app.get('/api/turno/estado', async (req, res) => {
     );
 
     if (!lastRows.length) {
-      return res.json({ estado: 'sin_turno' });
+      return res.json({ estado: 'sin_turno', caja_ocupada: cajaOcupada });
     }
 
     return res.json({
@@ -11389,6 +11423,7 @@ app.get('/api/turno/estado', async (req, res) => {
       ultimo_estado: lastRows[0].estado,
       ultimo_id_corte: lastRows[0].id_corte,
       ultimo_hora_cierre: lastRows[0].hora_cierre,
+      caja_ocupada: cajaOcupada,
     });
   } catch (error) {
     console.error('Error al consultar estado de turno:', error);
@@ -12047,6 +12082,15 @@ app.post('/api/turno/iniciar', async (req, res) => {
        LIMIT 1`,
       [cajaId, cajeroId]
     );
+
+    // Modo revision: no se abre un segundo turno en una caja con el turno abierto de otra persona.
+    const otherShift = openRows.length > 0 ? null : await findOtherOpenShift(cajaId, cajeroId);
+    const shiftDecision = decideShiftOperation({
+      authUserId, cajeroId, cajaId, ownShiftId: openRows[0]?.id_corte, otherShift,
+    });
+    if (!shiftDecision.ok) {
+      return res.status(shiftDecision.status).json({ message: shiftDecision.message, code: shiftDecision.code });
+    }
 
     if (openRows.length > 0) {
       await db.query(
@@ -13718,6 +13762,14 @@ app.post('/api/corte/cerrar', async (req, res) => {
     });
     return res.json(result);
   } catch (error) {
+    // Sin turno propio en una caja con el turno abierto de otra persona: modo revision, no se cierra nada.
+    if (error.code === 'SIN_TURNO_PROPIO') {
+      const otherShift = await findOtherOpenShift(cajaId, cajeroId).catch(() => null);
+      const shiftDecision = decideShiftOperation({ authUserId, cajeroId, cajaId, otherShift });
+      if (!shiftDecision.ok) {
+        return res.status(shiftDecision.status).json({ message: shiftDecision.message, code: shiftDecision.code });
+      }
+    }
     return res.status(Number(error.status || 500)).json({ message: error.status ? (error.message || 'Error interno del servidor') : logInternalError(error) });
   }
 
@@ -14282,13 +14334,13 @@ app.post('/api/login', async (req, res) => {
       }
     }
 
-    const accessDecision = reservationInvalid
-      ? (isVerifiedAdminSia(user) ? 'admin_restricted' : 'deny')
-      : decideReservationAccess({
-          reservation,
-          openShiftOwnerId: openShiftOwner?.id || 0,
-          user,
-        });
+    const accessDecision = decideReservationAccess({
+      reservation,
+      reservationInvalid,
+      openShiftOwnerId: openShiftOwner?.id || 0,
+      user,
+    });
+    const reviewMode = accessDecision === 'admin_review';
     const reservedOwner = reservation
       ? {
           id: reservation.ownerId,
@@ -14359,7 +14411,9 @@ app.post('/api/login', async (req, res) => {
     }
 
     const token = issueAccessToken(user.id, user.nombre);
-    const reservationToken = cajaId && deviceHash
+    // En modo revision no se reserva el equipo: la caja sigue siendo de quien tiene el turno abierto
+    // y una reserva del administrador no debe dejarla "tomada" cuando la cajera vuelva a ingresar.
+    const reservationToken = cajaId && deviceHash && !reviewMode
       ? createReservationToken({
           ownerId: Number(user.id),
           ownerLogin: String(user.user || '').trim(),
@@ -14395,6 +14449,13 @@ app.post('/api/login', async (req, res) => {
       sucursal_id: sucursalId || 1,
       permisos: permissions,
       reservation_token: reservationToken,
+      review_mode: reviewMode
+        ? {
+            caja_id: cajaId,
+            owner_name: openShiftOwner?.name || openShiftOwner?.login || '',
+            message: buildReviewModeMessage({ cajaId, owner: openShiftOwner }),
+          }
+        : null,
     });
   } catch (error) {
     console.error('Error durante el login:', error);
@@ -14692,6 +14753,14 @@ app.post('/api/sales', async (req, res) => {
        LIMIT 1`,
       [cajaId, cajeroId]
     );
+    // Solo se vende en el turno propio; en modo revision (turno abierto de otra persona) no se vende.
+    const otherShift = turnRows.length ? null : await findOtherOpenShift(cajaId, cajeroId);
+    const shiftDecision = decideShiftOperation({
+      authUserId: toInt(req.user?.sub), cajeroId, cajaId, ownShiftId: turnRows[0]?.id_corte, otherShift,
+    });
+    if (!shiftDecision.ok) {
+      return res.status(shiftDecision.status).json({ error: shiftDecision.message, code: shiftDecision.code });
+    }
     if (!turnRows.length) {
       return res.status(409).json({ error: 'Debe iniciar turno ingresando el monto inicial de caja' });
     }

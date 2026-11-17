@@ -80,18 +80,91 @@ test('solo admin_sia con rol administrador obtiene acceso restringido', () => {
   }), 'deny');
 });
 
-test('un turno de otro usuario aplica la misma política aunque no haya reserva local', () => {
+test('un turno de otro usuario sin reserva local: cajero rechazado, administrador en modo revisión', () => {
   assert.equal(decideReservationAccess({
     reservation: null,
     openShiftOwnerId: 17,
     user: { id: 22, user: 'otro_cajero', es_administrador: 0 },
   }), 'deny');
 
+  // M-035: sin reserva de otro en este equipo no se ofrece el cierre restringido; el admin entra a revisar.
   assert.equal(decideReservationAccess({
     reservation: null,
     openShiftOwnerId: 17,
     user: { id: 1, user: 'admin_sia', es_administrador: 1 },
+  }), 'admin_review');
+
+  assert.equal(decideReservationAccess({
+    reservation: null,
+    openShiftOwnerId: 17,
+    user: { id: 2, user: 'otro_admin', es_administrador: 1 },
+  }), 'admin_review');
+});
+
+test('el administrador con su propia reserva y turno ajeno entra en modo revisión', () => {
+  assert.equal(decideReservationAccess({
+    reservation: { ...reservation, ownerId: 2, ownerLogin: 'otro_admin' },
+    openShiftOwnerId: 17,
+    user: { id: 2, user: 'otro_admin', es_administrador: 1 },
+  }), 'admin_review');
+});
+
+test('la caja tomada por otro usuario (reserva local) mantiene el cierre restringido aunque haya turno', () => {
+  assert.equal(decideReservationAccess({
+    reservation,
+    openShiftOwnerId: 17,
+    user: { id: 1, user: 'admin_sia', es_administrador: 1 },
   }), 'admin_restricted');
+
+  assert.equal(decideReservationAccess({
+    reservation,
+    openShiftOwnerId: 17,
+    user: { id: 2, user: 'otro_admin', es_administrador: 1 },
+  }), 'deny');
+
+  assert.equal(decideReservationAccess({
+    reservation,
+    openShiftOwnerId: 17,
+    user: { id: 22, user: 'otro_cajero', es_administrador: 0 },
+  }), 'deny');
+});
+
+test('una reserva local inválida sigue igual: solo admin_sia obtiene acceso restringido', () => {
+  assert.equal(decideReservationAccess({
+    reservationInvalid: true,
+    openShiftOwnerId: 17,
+    user: { id: 1, user: 'admin_sia', es_administrador: 1 },
+  }), 'admin_restricted');
+
+  assert.equal(decideReservationAccess({
+    reservationInvalid: true,
+    user: { id: 2, user: 'otro_admin', es_administrador: 1 },
+  }), 'deny');
+
+  assert.equal(decideReservationAccess({
+    reservationInvalid: true,
+    user: { id: 17, user: 'cajera_ana', es_administrador: 0 },
+  }), 'deny');
+});
+
+test('dueño del turno es owner y sin reserva ni turno es unreserved', () => {
+  assert.equal(decideReservationAccess({
+    reservation: null,
+    openShiftOwnerId: 17,
+    user: { id: 17, user: 'cajera_ana', es_administrador: 0 },
+  }), 'owner');
+
+  assert.equal(decideReservationAccess({
+    reservation: null,
+    openShiftOwnerId: 0,
+    user: { id: 1, user: 'admin_sia', es_administrador: 1 },
+  }), 'unreserved');
+
+  assert.equal(decideReservationAccess({
+    reservation: null,
+    openShiftOwnerId: 0,
+    user: { id: 22, user: 'otro_cajero', es_administrador: 0 },
+  }), 'unreserved');
 });
 
 test('la respuesta restringida no entrega credenciales ni permisos de API', () => {
