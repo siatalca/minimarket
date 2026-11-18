@@ -4,6 +4,7 @@
 // canje condicional (solo 'enviado' y vigente) y vencimiento por reloj inyectable.
 
 const { TiendaConflictError } = require('../../server/tienda_repo');
+const { availableForCart, cartItemStockProblem, resolveCartLineQuantity } = require('../../server/tienda_core');
 
 function createMemoryRepo({ now = () => Date.now() } = {}) {
   const state = {
@@ -128,23 +129,32 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
         .map(({ i, p }) => ({ item_id: i.id, cantidad: i.cantidad, ...publicProduct(p), id_producto: undefined }));
       return { cart, items };
     },
+    // Sin await dentro: cada operacion del carrito es atomica, como con el bloqueo de la cuenta.
+    // El stock se lee de state.products en cada llamada (igual que la base real).
     async addCartItem(cuentaId, productoId, cantidad, { maxLines, maxQty }) {
       let cart = currentCart(cuentaId);
       if (cart && cart.estado === 'enviado') return { error: 'CART_LOCKED' };
+      const product = state.products.find((p) => p.id_producto === productoId);
+      if (!product) return { error: 'PRODUCT_NOT_FOUND' };
+      const existing = cart ? state.items.find((i) => i.carrito_id === cart.id && i.producto_id === productoId) : null;
+      const decision = resolveCartLineQuantity({
+        existing: existing ? existing.cantidad : 0, requested: cantidad, disponible: availableForCart(product), maxQty,
+      });
+      if (decision.error) return decision;
+      const result = decision.limited ? { ok: true, limited: true, disponible: decision.disponible } : { ok: true };
+      if (existing) {
+        existing.cantidad = decision.cantidad;
+        return result;
+      }
       if (!cart) {
         state.seq.cart += 1;
         cart = { id: state.seq.cart, cuenta_id: cuentaId, estado: 'abierto', codigo: null, codigo_expira: null, codigo_usado: null };
         state.carts.push(cart);
       }
-      const existing = state.items.find((i) => i.carrito_id === cart.id && i.producto_id === productoId);
-      if (existing) {
-        existing.cantidad = Math.min(existing.cantidad + cantidad, maxQty);
-        return { ok: true };
-      }
       if (state.items.filter((i) => i.carrito_id === cart.id).length >= maxLines) return { error: 'CART_LIMIT' };
       state.seq.item += 1;
-      state.items.push({ id: state.seq.item, carrito_id: cart.id, producto_id: productoId, cantidad });
-      return { ok: true };
+      state.items.push({ id: state.seq.item, carrito_id: cart.id, producto_id: productoId, cantidad: decision.cantidad });
+      return result;
     },
     async setCartItemQuantity(cuentaId, itemId, cantidad) {
       const cart = currentCart(cuentaId);
@@ -152,15 +162,26 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
       if (cart.estado === 'enviado') return { error: 'CART_LOCKED' };
       const index = state.items.findIndex((i) => i.id === itemId && i.carrito_id === cart.id);
       if (index < 0) return { error: 'ITEM_NOT_FOUND' };
-      if (cantidad === 0) state.items.splice(index, 1);
-      else state.items[index].cantidad = cantidad;
-      return { ok: true };
+      if (cantidad === 0) {
+        state.items.splice(index, 1);
+        return { ok: true };
+      }
+      const product = state.products.find((p) => p.id_producto === state.items[index].producto_id);
+      if (!product) return { error: 'ITEM_NOT_FOUND' };
+      const decision = resolveCartLineQuantity({ requested: cantidad, disponible: availableForCart(product), mode: 'set' });
+      if (decision.error) return decision;
+      state.items[index].cantidad = decision.cantidad;
+      return decision.limited ? { ok: true, limited: true, disponible: decision.disponible } : { ok: true };
     },
     async finalizeCart(cuentaId, generateCode, { attempts = 10 } = {}) {
       const view = currentCart(cuentaId);
       if (!view) return { error: 'CART_EMPTY' };
-      if (!cartItemsWithProducts(view.id).some(({ p }) => p)) return { error: 'CART_EMPTY' };
+      const lines = cartItemsWithProducts(view.id).filter(({ p }) => p);
+      if (!lines.length) return { error: 'CART_EMPTY' };
       if (view.estado === 'enviado' && view.codigo && view.vigente === 1) return { ok: true };
+      if (lines.some(({ i, p }) => cartItemStockProblem(i.cantidad, availableForCart(p)) !== null)) {
+        return { error: 'CART_STOCK_CHANGED' };
+      }
       const cart = state.carts.find((c) => c.id === view.id);
       for (let i = 0; i < attempts; i += 1) {
         const code = generateCode();

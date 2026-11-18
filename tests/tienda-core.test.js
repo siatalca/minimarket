@@ -93,14 +93,65 @@ test('buildCartResponse calcula subtotales y total, y muestra codigo solo si fue
   assert.equal(open.total, 6871.5);
   assert.equal(open.items[1].subtotal, 3871.5);
   assert.equal('codigo' in open, false);
-  assert.deepEqual(Object.keys(open.items[0]).sort(), ['cantidad', 'codigo', 'item_id', 'nombre', 'precio', 'stock', 'subtotal']);
+  assert.deepEqual(Object.keys(open.items[0]).sort(), ['cantidad', 'codigo', 'disponible', 'item_id', 'nombre', 'precio', 'problema', 'stock', 'subtotal']);
+  assert.equal(open.items[0].disponible, null);
+  assert.equal(open.items[1].disponible, 10);
+  assert.equal(open.bloqueado_por_stock, false);
 
   const expires = new Date('2026-11-18T15:00:00Z');
   const sent = core.buildCartResponse({ estado: 'enviado', codigo: '012345', codigo_expira: expires }, items);
   assert.equal(sent.codigo, '012345');
   assert.equal(sent.codigo_expira, '2026-11-18T15:00:00.000Z');
 
-  assert.deepEqual(core.buildCartResponse(null, []), { estado: 'abierto', items: [], total: 0 });
+  assert.deepEqual(core.buildCartResponse(null, []), { estado: 'abierto', items: [], total: 0, bloqueado_por_stock: false });
+});
+
+test('M-038 availableForCart: null sin inventario; con inventario la parte entera y 0 si no hay', () => {
+  assert.equal(core.availableForCart({ utiliza_inventario: 0, cantidad_actual: 40 }), null);
+  assert.equal(core.availableForCart({ utiliza_inventario: '1', cantidad_actual: '12.000' }), 12);
+  assert.equal(core.availableForCart({ utiliza_inventario: 1, cantidad_actual: 2.5 }), 2);
+  assert.equal(core.availableForCart({ utiliza_inventario: 1, cantidad_actual: 0.5 }), 0);
+  assert.equal(core.availableForCart({ utiliza_inventario: 1, cantidad_actual: -3 }), 0);
+  assert.equal(core.availableForCart({ utiliza_inventario: 1, cantidad_actual: null }), 0);
+});
+
+test('M-038 cartItemStockProblem', () => {
+  assert.equal(core.cartItemStockProblem(50, null), null);
+  assert.equal(core.cartItemStockProblem(1, 0), 'sin_stock');
+  assert.equal(core.cartItemStockProblem(3, 2), 'excede_stock');
+  assert.equal(core.cartItemStockProblem(2, 2), null);
+});
+
+test('M-038 resolveCartLineQuantity: agregar y cambiar con stock', () => {
+  const r = core.resolveCartLineQuantity;
+  // Sin inventario: solo el tope 99.
+  assert.deepEqual(r({ existing: 98, requested: 5, disponible: null }), { cantidad: 99 });
+  // Sin stock: no se agrega ni se sube.
+  assert.deepEqual(r({ requested: 1, disponible: 0 }), { error: 'OUT_OF_STOCK', disponible: 0 });
+  assert.deepEqual(r({ requested: 1, disponible: 0, mode: 'set' }), { error: 'OUT_OF_STOCK', disponible: 0 });
+  // Dentro del stock.
+  assert.deepEqual(r({ existing: 1, requested: 1, disponible: 2 }), { cantidad: 2 });
+  // Pide mas: se limita y avisa.
+  assert.deepEqual(r({ existing: 1, requested: 5, disponible: 3 }), { cantidad: 3, limited: true, disponible: 3 });
+  // Ya tenia todo (o mas, porque bajo el stock): STOCK_LIMIT sin cambios.
+  assert.deepEqual(r({ existing: 3, requested: 1, disponible: 3 }), { error: 'STOCK_LIMIT', disponible: 3 });
+  assert.deepEqual(r({ existing: 5, requested: 1, disponible: 3 }), { error: 'STOCK_LIMIT', disponible: 3 });
+  // Stock sobre 99: manda el tope 99 sin aviso.
+  assert.deepEqual(r({ existing: 99, requested: 1, disponible: 150 }), { cantidad: 99 });
+  // Cambiar cantidad: reemplaza (no suma) y se limita.
+  assert.deepEqual(r({ existing: 5, requested: 4, disponible: 2, mode: 'set' }), { cantidad: 2, limited: true, disponible: 2 });
+  assert.deepEqual(r({ existing: 5, requested: 2, disponible: 2, mode: 'set' }), { cantidad: 2 });
+  assert.deepEqual(core.stockLimitedNotice(3), { code: 'STOCK_LIMITED', disponible: 3, message: 'Solo quedan 3' });
+});
+
+test('M-038 buildCartResponse marca problemas de stock y bloqueado_por_stock', () => {
+  const cart = core.buildCartResponse({ estado: 'abierto' }, [
+    { item_id: 1, cantidad: 2, codigo_barras: 'A', descripcion: 'A', precio_venta: 10, utiliza_inventario: 1, cantidad_actual: 0 },
+    { item_id: 2, cantidad: 5, codigo_barras: 'B', descripcion: 'B', precio_venta: 10, utiliza_inventario: 1, cantidad_actual: 3 },
+    { item_id: 3, cantidad: 9, codigo_barras: 'C', descripcion: 'C', precio_venta: 10, utiliza_inventario: 0, cantidad_actual: 0 },
+  ]);
+  assert.deepEqual(cart.items.map((i) => [i.disponible, i.problema]), [[0, 'sin_stock'], [3, 'excede_stock'], [null, null]]);
+  assert.equal(cart.bloqueado_por_stock, true);
 });
 
 test('token de sesion: 32 bytes, guardado como sha256 y no es JWT', () => {

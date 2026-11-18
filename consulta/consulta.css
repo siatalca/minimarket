@@ -539,6 +539,47 @@ input[aria-invalid="true"] {
     font-weight: 600;
 }
 
+/* M-038: botón «Sin stock» deshabilitado pero legible (sin la opacidad general de los deshabilitados). */
+.btn-out,
+.btn-out:disabled {
+    min-height: 48px;
+    border: 2px dashed #9AA9BF;
+    border-radius: 10px;
+    padding: 10px 18px;
+    background: #EEF2F7;
+    color: #3B4A63;
+    font-weight: 700;
+    opacity: 1;
+}
+
+/* M-038: ítem cuyo stock ya no alcanza. */
+.items:has(.item-problem) {
+    overflow: hidden;
+}
+
+.item-problem {
+    background: #FEF2F2;
+    box-shadow: inset 4px 0 0 var(--out);
+}
+
+.btn-fix {
+    margin-top: 6px;
+    min-height: 40px;
+    padding: 6px 14px;
+    border: 1.5px solid var(--out);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--out);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-fix:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
 .item-qty {
     grid-area: side;
     color: var(--muted);

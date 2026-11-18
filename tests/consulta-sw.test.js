@@ -54,6 +54,15 @@ test('install guarda la estructura y activate borra solo cachés viejas de la co
   assert.deepEqual(ctx.deleted, ['consulta-viejo']);
 });
 
+test('el service worker guarda las mismas versiones que pide la página', () => {
+  const dir = path.join(__dirname, '..', 'consulta');
+  const html = fs.readFileSync(path.join(dir, 'index.php'), 'utf8');
+  const sw = fs.readFileSync(path.join(dir, 'sw.js'), 'utf8');
+  const refs = [...html.matchAll(/(?:href|src)="(\.{1,2}\/[^"]+\?v=[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(refs.length >= 6);
+  for (const ref of refs) assert.ok(sw.includes(`'${ref}'`), `sw.js no guarda ${ref}`);
+});
+
 test('fetch nunca intercepta /api/, otros dominios ni POST', () => {
   const { listeners } = loadSw();
   for (const ev of [

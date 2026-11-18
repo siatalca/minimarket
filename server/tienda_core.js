@@ -110,6 +110,41 @@ function buildPublicStock(row) {
   return { estado: cantidad <= threshold ? 'pocas' : 'disponible', cantidad };
 }
 
+// Unidades que el cliente puede tener en el carrito (M-038). null = no usa inventario (sin limite
+// de stock). Con inventario: la cantidad actual entera (un saldo fraccionario no completa una unidad).
+function availableForCart(row) {
+  if (Number(row?.utiliza_inventario || 0) !== 1) return null;
+  const cantidad = Number(Number(row?.cantidad_actual || 0).toFixed(3));
+  return Number.isFinite(cantidad) && cantidad > 0 ? Math.floor(cantidad) : 0;
+}
+
+// Problema de stock de una linea del carrito: null, 'sin_stock' o 'excede_stock'.
+function cartItemStockProblem(cantidad, disponible) {
+  if (disponible === null || disponible === undefined) return null;
+  if (disponible <= 0) return 'sin_stock';
+  return Number(cantidad) > disponible ? 'excede_stock' : null;
+}
+
+// Cantidad final de una linea al agregar (mode 'add': existente + pedida) o al cambiarla
+// (mode 'set': la pedida). Tope maxQty y, si usa inventario, lo disponible.
+// Devuelve { cantidad, limited?, disponible? } o { error: 'OUT_OF_STOCK' | 'STOCK_LIMIT', disponible }.
+// STOCK_LIMIT: al agregar, el carrito ya tenia todo lo disponible (no se cambia nada).
+// Misma regla para la base real (server/tienda_repo.js) y la simulada de las pruebas.
+function resolveCartLineQuantity({ existing = 0, requested, disponible, maxQty = LIMITS.itemMaxQty, mode = 'add' }) {
+  if (disponible !== null && disponible <= 0) return { error: 'OUT_OF_STOCK', disponible: 0 };
+  const current = Number(existing) || 0;
+  const wanted = Math.min(mode === 'add' ? current + requested : requested, maxQty);
+  if (disponible === null || wanted <= disponible) return { cantidad: wanted };
+  if (mode === 'add' && current >= disponible) return { error: 'STOCK_LIMIT', disponible };
+  return { cantidad: disponible, limited: true, disponible };
+}
+
+// Aviso cuando la cantidad quedo limitada al stock disponible.
+function stockLimitedNotice(disponible) {
+  const message = Number(disponible) === 1 ? 'Solo queda 1' : `Solo quedan ${disponible}`;
+  return { code: 'STOCK_LIMITED', disponible, message };
+}
+
 // Producto para la consulta publica. Arma el objeto campo por campo (lista blanca).
 function toPublicProduct(row) {
   return {
@@ -138,10 +173,12 @@ function toIsoDate(value) {
 
 // Respuesta {carrito}. Sin carrito guardado se responde uno abierto y vacio.
 // itemRows: item_id, cantidad y las columnas publicas del producto.
+// Cada item informa disponible (null si no usa inventario) y problema de stock (M-038).
 function buildCartResponse(cart, itemRows = []) {
   const items = (itemRows || []).map((row) => {
     const product = toPublicProduct(row);
     const cantidad = Number(row.cantidad || 0);
+    const disponible = availableForCart(row);
     return {
       item_id: Number(row.item_id),
       codigo: product.codigo,
@@ -150,12 +187,15 @@ function buildCartResponse(cart, itemRows = []) {
       cantidad,
       subtotal: roundAmount(product.precio * cantidad),
       stock: product.stock,
+      disponible,
+      problema: cartItemStockProblem(cantidad, disponible),
     };
   });
   const response = {
     estado: cart?.estado === 'enviado' ? 'enviado' : 'abierto',
     items,
     total: roundAmount(items.reduce((sum, item) => sum + item.subtotal, 0)),
+    bloqueado_por_stock: items.some((item) => item.problema !== null),
   };
   if (response.estado === 'enviado' && cart?.codigo) {
     response.codigo = String(cart.codigo);
@@ -241,6 +281,10 @@ module.exports = {
   parseItemId,
   resolvePublicFormat,
   buildPublicStock,
+  availableForCart,
+  cartItemStockProblem,
+  resolveCartLineQuantity,
+  stockLimitedNotice,
   toPublicProduct,
   toPublicAccount,
   buildCartResponse,

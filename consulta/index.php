@@ -24,7 +24,7 @@
     <link rel="apple-touch-icon" href="./icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Precios">
-    <link rel="stylesheet" href="./consulta.css?v=20261118a">
+    <link rel="stylesheet" href="./consulta.css?v=20261118b">
 </head>
 <body>
     <header class="top">
@@ -85,8 +85,8 @@
     <script src="../js/api_base.js?v=20261003a"></script>
     <script src="../js/html_escape.js?v=20261112a"></script>
     <script src="../js/camera_barcode_scanner.js?v=20261116b"></script>
-    <script src="./consulta_core.js?v=20261118a"></script>
+    <script src="./consulta_core.js?v=20261118c"></script>
     <script src="./consulta_ui.js?v=20261118a"></script>
-    <script src="./consulta.js?v=20261118a"></script>
+    <script src="./consulta.js?v=20261118c"></script>
 </body>
 </html>

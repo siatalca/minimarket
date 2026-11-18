@@ -86,6 +86,61 @@ test('parseCartResponse revisa estado, items y código del carrito enviado', () 
   assert.throws(() => core.parseCartResponse({}));
 });
 
+test('M-038: parseCartResponse lee disponible, problema y bloqueado_por_stock', () => {
+  const base = { item_id: 1, codigo: '78', nombre: 'Leche', precio: 1000, cantidad: 5, subtotal: 5000 };
+  const c = core.parseCartResponse({ carrito: { estado: 'abierto', total: 5000, bloqueado_por_stock: true, items: [{ ...base, disponible: 3, problema: 'excede_stock' }] } });
+  assert.equal(c.items[0].disponible, 3);
+  assert.equal(c.items[0].problema, 'excede_stock');
+  assert.equal(c.bloqueado_por_stock, true);
+  const free = core.parseCartResponse({ carrito: { estado: 'abierto', total: 5000, bloqueado_por_stock: false, items: [{ ...base, disponible: null, problema: null }] } });
+  assert.equal(free.items[0].disponible, null);
+  assert.equal(free.bloqueado_por_stock, false);
+  const derived = core.parseCartResponse({ carrito: { estado: 'abierto', total: 5000, items: [{ ...base, disponible: 0, problema: 'sin_stock' }] } });
+  assert.equal(derived.bloqueado_por_stock, true, 'sin el campo, basta un ítem marcado');
+  assert.throws(() => core.parseCartResponse({ carrito: { estado: 'abierto', total: 0, items: [{ ...base, problema: 'raro' }] } }));
+  assert.throws(() => core.parseCartResponse({ carrito: { estado: 'abierto', total: 0, items: [{ ...base, disponible: '3' }] } }));
+  assert.throws(() => core.parseCartResponse({ carrito: { estado: 'abierto', total: 0, items: [], bloqueado_por_stock: 'si' } }));
+});
+
+test('M-038: parseStockNotice entrega «Solo quedan N» y rechaza avisos mal formados', () => {
+  assert.equal(core.parseStockNotice({ carrito: {} }), '');
+  assert.equal(core.parseStockNotice({ aviso: null }), '');
+  assert.equal(core.parseStockNotice({ aviso: { code: 'STOCK_LIMITED', disponible: 3, message: 'Solo quedan 3' } }), 'Solo quedan 3.');
+  assert.equal(core.parseStockNotice({ aviso: { code: 'OTRO', message: 'Algo pasó' } }), 'Algo pasó');
+  assert.equal(core.parseStockNotice({ aviso: 'Solo quedan 3' }), '', 'aviso irreconocible no rompe el carrito ya guardado');
+  assert.equal(core.parseStockNotice({ aviso: { code: 'STOCK_LIMITED' } }), '');
+});
+
+test('M-038: productAddLimit y itemQtyMax ponen el tope según el stock', () => {
+  const p = (stock, formato = 'unidad') => ({ formato, stock });
+  assert.deepEqual(core.productAddLimit(p({ estado: 'sin_stock', cantidad: 0 })), { canAdd: false, max: 0, reason: 'sin_stock' });
+  assert.deepEqual(core.productAddLimit(p({ estado: 'pocas', cantidad: 3 })), { canAdd: true, max: 3, reason: '' });
+  assert.equal(core.productAddLimit(p({ estado: 'disponible', cantidad: 500 })).max, 99);
+  assert.equal(core.productAddLimit(p({ estado: 'pocas', cantidad: 0.5 })).canAdd, false);
+  assert.deepEqual(core.productAddLimit(p({ estado: 'no_controlado' })), { canAdd: true, max: 99, reason: '' });
+  assert.equal(core.productAddLimit(p({ estado: 'disponible', cantidad: 3 }, 'granel')).canAdd, false);
+  assert.equal(core.itemQtyMax({ disponible: null }), 99);
+  assert.equal(core.itemQtyMax({ disponible: 3 }), 3);
+  assert.equal(core.itemQtyMax({ disponible: -2 }), 0);
+});
+
+test('M-038: describeItemProblem y mensajes de error de stock', () => {
+  assert.equal(core.describeItemProblem({ problema: null, disponible: 3 }), null);
+  assert.deepEqual(core.describeItemProblem({ problema: 'sin_stock', disponible: 0 }).adjustTo, 0);
+  const over = core.describeItemProblem({ problema: 'excede_stock', disponible: 3 });
+  assert.equal(over.adjustTo, 3);
+  assert.match(over.text, /Solo quedan 3/);
+  assert.equal(core.describeItemProblem({ problema: 'sin_stock', disponible: 0 }, false).text, 'Se agotó: la caja te avisará.');
+  assert.equal(core.describeItemProblem({ problema: 'excede_stock', disponible: 3 }, false).text, 'Solo quedan 3: en caja se ajusta.');
+  assert.doesNotMatch(core.describeItemProblem({ problema: 'excede_stock', disponible: 3 }, false).text, /Quítalo|terminar/);
+  assert.match(core.apiErrorMessage(422, { code: 'STOCK_LIMIT', disponible: 4, message: 'x' }), /Solo quedan 4 y ya están/);
+  assert.equal(core.apiErrorMessage(422, { code: 'STOCK_LIMIT', disponible: 1 }), 'Solo queda 1 y ya está en tu carrito.');
+  assert.match(core.describeItemProblem({ problema: 'excede_stock', disponible: 1 }).text, /^Solo queda 1\./);
+  assert.equal(core.parseStockNotice({ aviso: { code: 'STOCK_LIMITED', disponible: 1 } }), 'Solo queda 1.');
+  assert.equal(core.apiErrorMessage(422, { code: 'OUT_OF_STOCK', disponible: 0 }), core.ERROR_MESSAGES.OUT_OF_STOCK);
+  assert.equal(core.apiErrorMessage(422, { code: 'CART_STOCK_CHANGED' }), core.ERROR_MESSAGES.CART_STOCK_CHANGED);
+});
+
 test('describeCodeExpiry calcula vencimiento', () => {
   const now = Date.parse('2026-11-18T16:00:00Z');
   const live = core.describeCodeExpiry('2026-11-18T17:58:00Z', now);

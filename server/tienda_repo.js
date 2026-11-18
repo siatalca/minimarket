@@ -2,6 +2,8 @@
 // Todo el SQL de las tablas tienda_* vive aqui. Las consultas publicas usan columnas explicitas.
 // Las fechas de vencimiento se calculan con NOW() de la base, igual que las comparaciones.
 
+const { availableForCart, cartItemStockProblem, resolveCartLineQuantity } = require('./tienda_core');
+
 // Columnas del producto que puede ver el cliente (ver toPublicProduct en tienda_core.js).
 // id_producto se lee solo para uso interno (guardar la linea del carrito); nunca se responde.
 const PUBLIC_PRODUCT_SELECT = `p.id_producto, p.codigo_barras, p.descripcion, p.precio_venta,
@@ -245,71 +247,105 @@ function createTiendaRepo(db) {
     return { cart, items };
   }
 
-  // Suma la cantidad si el producto ya esta (tope maxQty). Errores: CART_LOCKED, CART_LIMIT.
+  // Stock actual del producto, leido de la base en cada operacion del carrito (M-038).
+  // Sin FOR UPDATE: el carrito no reserva stock, asi que no se bloquea el producto a la caja.
+  async function productStock(executor, productoId) {
+    const [rows] = await executor.query(
+      'SELECT utiliza_inventario, cantidad_actual FROM productos WHERE id_producto = ? LIMIT 1',
+      [productoId]
+    );
+    return rows[0] || null;
+  }
+
+  // Suma la cantidad si el producto ya esta (tope maxQty y stock disponible, M-038). El stock se lee
+  // dentro del bloqueo de la cuenta: dos agregados seguidos del mismo cliente se ven uno al otro.
+  // Devuelve { ok, limited?, disponible? }. Errores: CART_LOCKED, CART_LIMIT, PRODUCT_NOT_FOUND,
+  // OUT_OF_STOCK y STOCK_LIMIT (con disponible). Un error de stock no crea carrito ni cambia nada.
   async function addCartItem(cuentaId, productoId, cantidad, { maxLines, maxQty }) {
     return withAccountLock(cuentaId, async (conn) => {
       let cart = await currentCart(conn, cuentaId);
       if (cart && cart.estado === 'enviado') return { error: 'CART_LOCKED' };
+      const product = await productStock(conn, productoId);
+      if (!product) return { error: 'PRODUCT_NOT_FOUND' };
+      let existing = null;
+      if (cart) {
+        const [rows] = await conn.query(
+          'SELECT id, cantidad FROM tienda_carrito_items WHERE carrito_id = ? AND producto_id = ? LIMIT 1',
+          [cart.id, productoId]
+        );
+        existing = rows[0] || null;
+      }
+      const decision = resolveCartLineQuantity({
+        existing: existing ? Number(existing.cantidad) : 0,
+        requested: cantidad,
+        disponible: availableForCart(product),
+        maxQty,
+      });
+      if (decision.error) return decision;
+      const result = decision.limited ? { ok: true, limited: true, disponible: decision.disponible } : { ok: true };
+      if (existing) {
+        await conn.query('UPDATE tienda_carrito_items SET cantidad = ? WHERE id = ?', [decision.cantidad, existing.id]);
+        return result;
+      }
       if (!cart) {
         const [created] = await conn.query("INSERT INTO tienda_carritos (cuenta_id, estado) VALUES (?, 'abierto')", [cuentaId]);
         cart = { id: created.insertId };
-      }
-      const [existing] = await conn.query(
-        'SELECT id FROM tienda_carrito_items WHERE carrito_id = ? AND producto_id = ? LIMIT 1',
-        [cart.id, productoId]
-      );
-      if (existing.length) {
-        await conn.query(
-          'UPDATE tienda_carrito_items SET cantidad = LEAST(cantidad + ?, ?) WHERE id = ?',
-          [cantidad, maxQty, existing[0].id]
-        );
-        return { ok: true };
       }
       const [countRows] = await conn.query('SELECT COUNT(*) AS total FROM tienda_carrito_items WHERE carrito_id = ?', [cart.id]);
       if (Number(countRows[0]?.total || 0) >= maxLines) return { error: 'CART_LIMIT' };
       await conn.query(
         'INSERT INTO tienda_carrito_items (carrito_id, producto_id, cantidad) VALUES (?, ?, ?)',
-        [cart.id, productoId, cantidad]
+        [cart.id, productoId, decision.cantidad]
       );
-      return { ok: true };
+      return result;
     });
   }
 
-  // cantidad 0 = quitar la linea. Errores: CART_LOCKED, ITEM_NOT_FOUND.
+  // cantidad 0 = quitar la linea (siempre se permite). Otra cantidad se limita al stock disponible
+  // (M-038). Devuelve { ok, limited?, disponible? }. Errores: CART_LOCKED, ITEM_NOT_FOUND, OUT_OF_STOCK.
   async function setCartItemQuantity(cuentaId, itemId, cantidad) {
     return withAccountLock(cuentaId, async (conn) => {
       const cart = await currentCart(conn, cuentaId);
       if (!cart) return { error: 'ITEM_NOT_FOUND' };
       if (cart.estado === 'enviado') return { error: 'CART_LOCKED' };
       const [found] = await conn.query(
-        'SELECT id FROM tienda_carrito_items WHERE id = ? AND carrito_id = ? LIMIT 1',
+        'SELECT id, producto_id FROM tienda_carrito_items WHERE id = ? AND carrito_id = ? LIMIT 1',
         [itemId, cart.id]
       );
       if (!found.length) return { error: 'ITEM_NOT_FOUND' };
       if (cantidad === 0) {
         await conn.query('DELETE FROM tienda_carrito_items WHERE id = ? AND carrito_id = ?', [itemId, cart.id]);
-      } else {
-        await conn.query('UPDATE tienda_carrito_items SET cantidad = ? WHERE id = ? AND carrito_id = ?', [cantidad, itemId, cart.id]);
+        return { ok: true };
       }
-      return { ok: true };
+      // Un producto borrado no se muestra en el carrito (getCart usa INNER JOIN): solo se puede quitar.
+      const product = await productStock(conn, found[0].producto_id);
+      if (!product) return { error: 'ITEM_NOT_FOUND' };
+      const decision = resolveCartLineQuantity({ requested: cantidad, disponible: availableForCart(product), mode: 'set' });
+      if (decision.error) return decision;
+      await conn.query('UPDATE tienda_carrito_items SET cantidad = ? WHERE id = ? AND carrito_id = ?', [decision.cantidad, itemId, cart.id]);
+      return decision.limited ? { ok: true, limited: true, disponible: decision.disponible } : { ok: true };
     });
   }
 
-  // Idempotente: si el codigo sigue vigente se mantiene. Vencido o abierto: codigo nuevo por 2 horas.
-  // Error: CART_EMPTY.
+  // Idempotente: si el codigo sigue vigente se mantiene. Vencido o abierto: codigo nuevo por 2 horas,
+  // solo si ningun producto quedo sin stock o con menos stock que lo pedido (M-038).
+  // Errores: CART_EMPTY, CART_STOCK_CHANGED.
   async function finalizeCart(cuentaId, generateCode, { attempts = 10 } = {}) {
     return withAccountLock(cuentaId, async (conn) => {
       const cart = await currentCart(conn, cuentaId);
       if (!cart) return { error: 'CART_EMPTY' };
-      const [countRows] = await conn.query(
-        `SELECT COUNT(*) AS total
+      const [itemRows] = await conn.query(
+        `SELECT i.cantidad, p.utiliza_inventario, p.cantidad_actual
          FROM tienda_carrito_items i
          INNER JOIN productos p ON p.id_producto = i.producto_id
          WHERE i.carrito_id = ?`,
         [cart.id]
       );
-      if (Number(countRows[0]?.total || 0) === 0) return { error: 'CART_EMPTY' };
+      if (!itemRows.length) return { error: 'CART_EMPTY' };
       if (cart.estado === 'enviado' && cart.codigo && Number(cart.vigente) === 1) return { ok: true };
+      if (itemRows.some((row) => cartItemStockProblem(row.cantidad, availableForCart(row)) !== null)) {
+        return { error: 'CART_STOCK_CHANGED' };
+      }
 
       for (let i = 0; i < attempts; i += 1) {
         try {

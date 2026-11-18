@@ -137,9 +137,15 @@ function registerTiendaRoutes(app, {
     return res.status(status).json({ token, cuenta: core.toPublicAccount(account) });
   }
 
-  async function cartResponse(res, cuentaId) {
+  async function cartResponse(res, cuentaId, extra = {}) {
     const { cart, items } = await repo.getCart(cuentaId);
-    return res.json({ carrito: core.buildCartResponse(cart, items) });
+    return res.json({ carrito: core.buildCartResponse(cart, items), ...extra });
+  }
+
+  // Resultado correcto de agregar o cambiar cantidad: si quedo limitada al stock, va el aviso.
+  function cartChangeResponse(res, cuentaId, result) {
+    const extra = result.limited ? { aviso: core.stockLimitedNotice(result.disponible) } : {};
+    return cartResponse(res, cuentaId, extra);
   }
 
   function sendGoogleError(res, err) {
@@ -364,11 +370,19 @@ function registerTiendaRoutes(app, {
     CART_LIMIT: [422, `El carrito admite hasta ${core.LIMITS.cartMaxLines} productos distintos.`],
     CART_EMPTY: [422, 'Agrega productos antes de finalizar.'],
     ITEM_NOT_FOUND: [404, 'Ese producto ya no esta en tu carrito.'],
+    PRODUCT_NOT_FOUND: [404, 'Producto no encontrado.'],
+    // Stock (M-038).
+    OUT_OF_STOCK: [422, 'Este producto no tiene stock. Puedes consultar su precio, pero no agregarlo al carrito.'],
+    STOCK_LIMIT: [422, (disponible) => `Ya tienes en el carrito todo el stock disponible (${disponible}).`],
+    CART_STOCK_CHANGED: [422, 'Algunos productos de tu carrito ya no tienen stock suficiente. Quitalos o ajusta la cantidad.'],
   };
 
-  function sendCartError(res, code) {
+  // failure: codigo o resultado del repo ({ error, disponible? }). disponible se responde si viene.
+  function sendCartError(res, failure, extra = {}) {
+    const { error: code, disponible } = typeof failure === 'string' ? { error: failure } : failure;
     const [status, message] = CART_ERRORS[code] || [500, 'Error interno del servidor'];
-    return sendError(res, status, code, message);
+    const text = typeof message === 'function' ? message(disponible) : message;
+    return sendError(res, status, code, text, { ...(disponible === undefined ? {} : { disponible }), ...extra });
   }
 
   app.get('/api/tienda/carrito', async (req, res) => {
@@ -403,8 +417,8 @@ function registerTiendaRoutes(app, {
         maxLines: core.LIMITS.cartMaxLines,
         maxQty: core.LIMITS.itemMaxQty,
       });
-      if (result.error) return sendCartError(res, result.error);
-      return await cartResponse(res, session.cuenta_id);
+      if (result.error) return sendCartError(res, result);
+      return await cartChangeResponse(res, session.cuenta_id, result);
     } catch (err) {
       return internalError(res, err);
     }
@@ -420,8 +434,8 @@ function registerTiendaRoutes(app, {
       const session = await loadSession(tokenHash, res);
       if (!session) return undefined;
       const result = await repo.setCartItemQuantity(session.cuenta_id, itemId, cantidad);
-      if (result.error) return sendCartError(res, result.error);
-      return await cartResponse(res, session.cuenta_id);
+      if (result.error) return sendCartError(res, result);
+      return await cartChangeResponse(res, session.cuenta_id, result);
     } catch (err) {
       return internalError(res, err);
     }
@@ -440,7 +454,12 @@ function registerTiendaRoutes(app, {
       const session = await loadSession(tokenHash, res);
       if (!session) return undefined;
       const result = await repo.finalizeCart(session.cuenta_id, generateCartCode);
-      if (result.error) return sendCartError(res, result.error);
+      if (result.error === 'CART_STOCK_CHANGED') {
+        // Se responde el carrito con los items marcados para que el cliente los quite o ajuste.
+        const { cart, items } = await repo.getCart(session.cuenta_id);
+        return sendCartError(res, result, { carrito: core.buildCartResponse(cart, items) });
+      }
+      if (result.error) return sendCartError(res, result);
       return await cartResponse(res, session.cuenta_id);
     } catch (err) {
       return internalError(res, err);

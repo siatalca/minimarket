@@ -41,7 +41,11 @@
         BULK_NOT_ALLOWED: 'Este producto se pesa en caja: no se agrega al carrito.',
         CART_LIMIT: 'Llegaste al máximo del carrito (60 productos distintos o 99 unidades por producto).',
         CART_EMPTY: 'Tu carrito está vacío. Agrega al menos un producto.',
+        OUT_OF_STOCK: 'Este producto no tiene stock en la tienda: no se puede agregar al carrito.',
+        STOCK_LIMIT: 'Ya tienes en tu carrito todo lo que queda de este producto.',
+        CART_STOCK_CHANGED: 'Cambió el stock de algunos productos. Quítalos o ajusta la cantidad para terminar.',
     };
+    const ITEM_PROBLEMS = new Set(['sin_stock', 'excede_stock']);
 
     function isValidProductCode(raw) {
         return PRODUCT_CODE_RE.test(String(raw ?? '').trim());
@@ -176,6 +180,13 @@
                 || !isFiniteNumber(item.cantidad) || !isFiniteNumber(item.subtotal)) {
                 throw new Error('La respuesta del carrito no tiene la forma esperada.');
             }
+            // M-038: disponible (número o null si no controla inventario) y problema de stock.
+            if (item.disponible !== undefined && item.disponible !== null && !isFiniteNumber(item.disponible)) {
+                throw new Error('La respuesta del carrito no tiene la forma esperada.');
+            }
+            if (item.problema !== undefined && item.problema !== null && !ITEM_PROBLEMS.has(item.problema)) {
+                throw new Error('La respuesta del carrito no tiene la forma esperada.');
+            }
             return {
                 item_id: item.item_id,
                 codigo: typeof item.codigo === 'string' ? item.codigo : '',
@@ -184,14 +195,81 @@
                 cantidad: item.cantidad,
                 subtotal: item.subtotal,
                 stock: isPlainObject(item.stock) ? item.stock : null,
+                disponible: item.disponible ?? null,
+                problema: item.problema ?? null,
             };
         });
+        if (c.bloqueado_por_stock !== undefined && typeof c.bloqueado_por_stock !== 'boolean') {
+            throw new Error('La respuesta del carrito no tiene la forma esperada.');
+        }
         const codigo = typeof c.codigo === 'string' && c.codigo ? c.codigo : null;
         const expira = typeof c.codigo_expira === 'string' && c.codigo_expira ? c.codigo_expira : null;
         if (c.estado === 'enviado' && (!codigo || !expira || Number.isNaN(Date.parse(expira)))) {
             throw new Error('El carrito enviado no trae su código para caja.');
         }
-        return { estado: c.estado, items, total: c.total, codigo, codigo_expira: expira };
+        // Lo decide el servidor; si no lo informa, basta con que un ítem venga marcado.
+        const bloqueado = typeof c.bloqueado_por_stock === 'boolean'
+            ? c.bloqueado_por_stock
+            : items.some((item) => item.problema !== null);
+        return { estado: c.estado, items, total: c.total, codigo, codigo_expira: expira, bloqueado_por_stock: bloqueado };
+    }
+
+    // Aviso { code: 'STOCK_LIMITED', disponible, message } al agregar o cambiar cantidad (M-038).
+    // Devuelve el texto «Solo quedan N» o '' si no hay aviso. Un aviso irreconocible también da '': el carrito
+    // ya se guardó y se muestra con lo que diga el servidor (cantidades y marcas de stock).
+    function parseStockNotice(data) {
+        const aviso = isPlainObject(data) ? data.aviso : undefined;
+        if (!isPlainObject(aviso) || typeof aviso.code !== 'string') return '';
+        if (aviso.code === 'STOCK_LIMITED' && isFiniteNumber(aviso.disponible)) {
+            return `${onlyLeft(aviso.disponible)}.`;
+        }
+        if (typeof aviso.message === 'string' && aviso.message.trim()) return aviso.message.trim().slice(0, 200);
+        return '';
+    }
+
+    function formatUnits(value) {
+        return String(Math.max(0, Math.floor(Number(value) || 0)));
+    }
+
+    // «Solo queda 1» / «Solo quedan 3».
+    function onlyLeft(value) {
+        const n = formatUnits(value);
+        return n === '1' ? 'Solo queda 1' : `Solo quedan ${n}`;
+    }
+
+    // Cuántas unidades se pueden pedir de un producto consultado y si se puede agregar.
+    // El servidor vuelve a revisar el stock al agregar; esto solo pone el tope del selector.
+    function productAddLimit(product) {
+        if (!product || product.formato === 'granel') return { canAdd: false, max: 0, reason: 'granel' };
+        const estado = product.stock?.estado;
+        if (estado === 'sin_stock') return { canAdd: false, max: 0, reason: 'sin_stock' };
+        if (estado === 'no_controlado') return { canAdd: true, max: MAX_QTY, reason: '' };
+        const cantidad = product.stock?.cantidad;
+        if (!isFiniteNumber(cantidad)) return { canAdd: true, max: MAX_QTY, reason: '' };
+        const max = Math.min(MAX_QTY, Math.floor(cantidad));
+        if (max < 1) return { canAdd: false, max: 0, reason: 'sin_stock' };
+        return { canAdd: true, max, reason: '' };
+    }
+
+    // Tope del selector de un ítem del carrito: lo disponible (o 99 si no controla inventario).
+    function itemQtyMax(item) {
+        if (!item || item.disponible === null || item.disponible === undefined) return MAX_QTY;
+        return Math.max(0, Math.min(MAX_QTY, Math.floor(item.disponible)));
+    }
+
+    // Texto y acción sugerida para un ítem marcado por el servidor. editable === false (carrito enviado, solo
+    // lectura): texto informativo, sin pedir acciones que esa vista no tiene.
+    function describeItemProblem(item, editable = true) {
+        if (!item || !item.problema) return null;
+        if (item.problema === 'sin_stock' || itemQtyMax(item) < 1) {
+            return editable
+                ? { text: 'Se agotó en la tienda. Quítalo para poder terminar.', adjustTo: 0 }
+                : { text: 'Se agotó: la caja te avisará.', adjustTo: 0 };
+        }
+        const n = itemQtyMax(item);
+        return editable
+            ? { text: `${onlyLeft(n)}. Ajusta la cantidad a ${n} o quítalo para poder terminar.`, adjustTo: n }
+            : { text: `${onlyLeft(n)}: en caja se ajusta.`, adjustTo: n };
     }
 
     // Revisa { token?, cuenta } de las rutas de cuenta.
@@ -242,6 +320,9 @@
     // Mensaje para el cliente a partir del estado HTTP y el cuerpo { message, code }.
     function apiErrorMessage(status, body) {
         const code = isPlainObject(body) && typeof body.code === 'string' ? body.code : '';
+        if (code === 'STOCK_LIMIT' && isFiniteNumber(body.disponible)) {
+            return `${onlyLeft(body.disponible)} y ya ${formatUnits(body.disponible) === '1' ? 'está' : 'están'} en tu carrito.`;
+        }
         if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
         if (status === 429) return ERROR_MESSAGES.RATE_LIMITED;
         if (status === 401) return ERROR_MESSAGES.SESSION_INVALID;
@@ -265,6 +346,10 @@
         describeStock,
         parseProductResponse,
         parseCartResponse,
+        parseStockNotice,
+        productAddLimit,
+        itemQtyMax,
+        describeItemProblem,
         parseAccount,
         describeCodeExpiry,
         formatCartCode,

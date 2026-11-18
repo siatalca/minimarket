@@ -330,9 +330,12 @@ test('tokens no se cruzan: cliente 401 en /api/productos y JWT del personal 401 
 test('carrito: agregar suma, granel 422, inexistente 404, editar, quitar y limite de lineas', async () => {
   const ctx = await startApp();
   try {
+    // Stock amplio: aqui se prueban las reglas de M-037 (el stock se prueba aparte, M-038).
+    ctx.repo.state.products.find((p) => p.codigo_barras === '7801000000011').cantidad_actual = 200;
+    ctx.repo.state.products.find((p) => p.codigo_barras === '0042').cantidad_actual = 10;
     const { token } = (await register(ctx)).json;
     const empty = await ctx.call('GET', '/api/tienda/carrito', { token });
-    assert.deepEqual(empty.json, { carrito: { estado: 'abierto', items: [], total: 0 } });
+    assert.deepEqual(empty.json, { carrito: { estado: 'abierto', items: [], total: 0, bloqueado_por_stock: false } });
 
     let r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '7801000000011', cantidad: 2 } });
     assert.equal(r.status, 200);
@@ -471,7 +474,7 @@ test('canje en caja: 200 la primera vez, 409 la segunda, 410 vencido y 404 inexi
 
     // Despues del retiro, el cliente parte con un carrito nuevo.
     const fresh = await ctx.call('GET', '/api/tienda/carrito', { token });
-    assert.deepEqual(fresh.json.carrito, { estado: 'abierto', items: [], total: 0 });
+    assert.deepEqual(fresh.json.carrito, { estado: 'abierto', items: [], total: 0, bloqueado_por_stock: false });
 
     // Vencido: 410.
     await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '7801000000011', cantidad: 1 } });
@@ -647,6 +650,192 @@ test('QR: 401 si el JWT no trae sub', async () => {
     const url = encodeURIComponent('https://minimarket.example.cl/consulta/');
     const r = await ctx.call('GET', `/api/consulta-qr.svg?url=${url}`, { token: NO_SUB_TOKEN });
     assert.equal(r.status, 401);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ---------------- M-038: stock en el carrito ----------------
+
+function setStock(ctx, codigo, cantidad) {
+  ctx.repo.state.products.find((p) => p.codigo_barras === codigo).cantidad_actual = cantidad;
+}
+
+test('M-038 sin stock: se consulta precio y stock, pero agregar da 422 OUT_OF_STOCK sin crear carrito', async () => {
+  const ctx = await startApp();
+  try {
+    ctx.repo.addProduct({ codigo_barras: '7801000000035', descripcion: 'Yogur', precio_venta: 450, cantidad_actual: '0.000', utiliza_inventario: 1, cantidad_minima: 2, formato_venta: 'Unidad' });
+    const consulta = await ctx.call('GET', '/api/tienda/producto?codigo=7801000000035');
+    assert.equal(consulta.status, 200);
+    assert.deepEqual(consulta.json.producto.stock, { estado: 'sin_stock', cantidad: 0 });
+
+    const { token } = (await register(ctx)).json;
+    const r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '7801000000035', cantidad: 1 } });
+    assert.equal(r.status, 422);
+    assert.equal(r.json.code, 'OUT_OF_STOCK');
+    assert.equal(r.json.disponible, 0);
+    assert.match(r.json.message, /no tiene stock/);
+    assert.equal(ctx.repo.state.carts.length, 0, 'no se crea carrito');
+    assert.equal(ctx.repo.state.items.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('M-038 agregar mas de lo disponible: se limita con aviso; con todo en el carrito 422 STOCK_LIMIT', async () => {
+  const ctx = await startApp();
+  try {
+    const { token } = (await register(ctx)).json;
+    let r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 5 } });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.aviso, { code: 'STOCK_LIMITED', disponible: 2, message: 'Solo quedan 2' });
+    assert.equal(r.json.carrito.items[0].cantidad, 2);
+    assert.equal(r.json.carrito.items[0].disponible, 2);
+    assert.equal(r.json.carrito.items[0].problema, null);
+    assert.equal(r.json.carrito.bloqueado_por_stock, false);
+
+    r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 1 } });
+    assert.equal(r.status, 422);
+    assert.equal(r.json.code, 'STOCK_LIMIT');
+    assert.equal(r.json.disponible, 2);
+    assert.equal(ctx.repo.state.items[0].cantidad, 2, 'no cambia nada');
+
+    // Suma que cabe: sin aviso.
+    r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '7801000000011', cantidad: 3 } });
+    assert.equal(r.status, 200);
+    assert.equal('aviso' in r.json, false);
+    r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '7801000000011', cantidad: 30 } });
+    assert.equal(r.json.aviso.message, 'Solo quedan 24');
+    assert.equal(r.json.carrito.items[1].cantidad, 24);
+
+    // El stock se lee en cada operacion: si sube, se puede agregar de nuevo.
+    setStock(ctx, '0042', 4);
+    r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 1 } });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.carrito.items[0].cantidad, 3);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('M-038 producto que no usa inventario: sin limite de stock (solo tope 99)', async () => {
+  const ctx = await startApp();
+  try {
+    ctx.repo.addProduct({ codigo_barras: 'BOLSA', descripcion: 'Bolsa', precio_venta: 50, cantidad_actual: 0, utiliza_inventario: 0, formato_venta: 'Unidad' });
+    const { token } = (await register(ctx)).json;
+    let r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: 'BOLSA', cantidad: 60 } });
+    assert.equal(r.status, 200);
+    r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: 'BOLSA', cantidad: 60 } });
+    assert.equal(r.json.carrito.items[0].cantidad, 99);
+    assert.equal(r.json.carrito.items[0].disponible, null);
+    assert.equal(r.json.carrito.items[0].problema, null);
+    assert.equal('aviso' in r.json, false);
+    r = await ctx.call('PUT', `/api/tienda/carrito/items/${r.json.carrito.items[0].item_id}`, { token, body: { cantidad: 80 } });
+    assert.equal(r.json.carrito.items[0].cantidad, 80);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('M-038 cambiar cantidad: se limita con aviso; sin stock solo se puede bajar a 0 o quitar', async () => {
+  const ctx = await startApp();
+  try {
+    const { token } = (await register(ctx)).json;
+    let r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 1 } });
+    const itemId = r.json.carrito.items[0].item_id;
+    r = await ctx.call('PUT', `/api/tienda/carrito/items/${itemId}`, { token, body: { cantidad: 5 } });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.carrito.items[0].cantidad, 2);
+    assert.deepEqual(r.json.aviso, { code: 'STOCK_LIMITED', disponible: 2, message: 'Solo quedan 2' });
+    r = await ctx.call('PUT', `/api/tienda/carrito/items/${itemId}`, { token, body: { cantidad: 1 } });
+    assert.equal(r.json.carrito.items[0].cantidad, 1);
+    assert.equal('aviso' in r.json, false);
+
+    // Se agota mientras esta en el carrito: se marca y no se puede subir ni mantener.
+    setStock(ctx, '0042', 0);
+    r = await ctx.call('GET', '/api/tienda/carrito', { token });
+    assert.equal(r.json.carrito.items[0].problema, 'sin_stock');
+    assert.equal(r.json.carrito.items[0].disponible, 0);
+    assert.equal(r.json.carrito.bloqueado_por_stock, true);
+    r = await ctx.call('PUT', `/api/tienda/carrito/items/${itemId}`, { token, body: { cantidad: 1 } });
+    assert.equal(r.status, 422);
+    assert.equal(r.json.code, 'OUT_OF_STOCK');
+    assert.equal(r.json.disponible, 0);
+    r = await ctx.call('PUT', `/api/tienda/carrito/items/${itemId}`, { token, body: { cantidad: 0 } });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.carrito.items.length, 0);
+    assert.equal(r.json.carrito.bloqueado_por_stock, false);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('M-038 finalizar con stock cambiado: 422 CART_STOCK_CHANGED con el carrito marcado; ajustado, finaliza', async () => {
+  const ctx = await startApp();
+  try {
+    const { token } = (await register(ctx)).json;
+    await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '7801000000011', cantidad: 5 } });
+    let r = await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 1 } });
+    const [leche, chicle] = r.json.carrito.items;
+    setStock(ctx, '7801000000011', 3);
+    setStock(ctx, '0042', 0);
+
+    r = await ctx.call('POST', '/api/tienda/carrito/finalizar', { token });
+    assert.equal(r.status, 422);
+    assert.equal(r.json.code, 'CART_STOCK_CHANGED');
+    assert.ok(r.json.message);
+    assert.equal(r.json.carrito.estado, 'abierto');
+    assert.equal(r.json.carrito.codigo, undefined, 'no genera codigo');
+    assert.equal(r.json.carrito.bloqueado_por_stock, true);
+    assert.deepEqual(r.json.carrito.items.map((i) => [i.disponible, i.problema]), [[3, 'excede_stock'], [0, 'sin_stock']]);
+    assert.equal(ctx.repo.state.carts[0].codigo, null);
+
+    // Ajusta uno: sigue bloqueado por el otro.
+    r = await ctx.call('PUT', `/api/tienda/carrito/items/${leche.item_id}`, { token, body: { cantidad: 3 } });
+    assert.equal(r.json.carrito.items[0].problema, null);
+    assert.equal((await ctx.call('POST', '/api/tienda/carrito/finalizar', { token })).status, 422);
+    await ctx.call('DELETE', `/api/tienda/carrito/items/${chicle.item_id}`, { token });
+    r = await ctx.call('POST', '/api/tienda/carrito/finalizar', { token });
+    assert.equal(r.status, 200);
+    assert.match(r.json.carrito.codigo, /^\d{6}$/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('M-038 finalizar ya enviado: con codigo vigente responde igual; vencido y con stock cambiado 422', async () => {
+  const ctx = await startApp();
+  try {
+    const { token } = (await register(ctx)).json;
+    await ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 2 } });
+    const sent = await ctx.call('POST', '/api/tienda/carrito/finalizar', { token });
+    setStock(ctx, '0042', 1);
+    const again = await ctx.call('POST', '/api/tienda/carrito/finalizar', { token });
+    assert.equal(again.status, 200, 'codigo vigente: la caja avisa los faltantes al cargar');
+    assert.equal(again.json.carrito.codigo, sent.json.carrito.codigo);
+    assert.equal(again.json.carrito.bloqueado_por_stock, true);
+
+    ctx.advance(2 * 3600000 + 1000);
+    const expired = await ctx.call('POST', '/api/tienda/carrito/finalizar', { token });
+    assert.equal(expired.status, 422);
+    assert.equal(expired.json.code, 'CART_STOCK_CHANGED');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('M-038 dos agregados seguidos del mismo cliente no superan el stock', async () => {
+  const ctx = await startApp();
+  try {
+    const { token } = (await register(ctx)).json;
+    const results = await Promise.all([
+      ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 2 } }),
+      ctx.call('POST', '/api/tienda/carrito/items', { token, body: { codigo: '42', cantidad: 2 } }),
+    ]);
+    assert.deepEqual(results.map((x) => x.status).sort(), [200, 422]);
+    assert.equal(results.find((x) => x.status === 422).json.code, 'STOCK_LIMIT');
+    assert.equal(ctx.repo.state.items.length, 1);
+    assert.equal(ctx.repo.state.items[0].cantidad, 2);
   } finally {
     await ctx.close();
   }

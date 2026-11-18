@@ -31,6 +31,7 @@
         cartStatus: 'idle', // idle | loading | ready | error
         cartError: '',
         cartActionError: '',
+        cartNotice: '', // aviso «Solo quedan N» del servidor (M-038)
         busy: false,
         lastProduct: null,
         addQty: 1,
@@ -231,6 +232,7 @@
 
     function qtyStepper(value, onChange, opts = {}) {
         const label = opts.label || 'Cantidad';
+        const max = Number.isFinite(opts.max) ? opts.max : C.MAX_QTY;
         const minus = h('button', {
             class: 'step', type: 'button', 'aria-label': `Restar uno a ${label}`, text: '−',
             disabled: opts.disabled || value <= 1,
@@ -238,7 +240,7 @@
         });
         const plus = h('button', {
             class: 'step', type: 'button', 'aria-label': `Sumar uno a ${label}`, text: '+',
-            disabled: opts.disabled || value >= C.MAX_QTY,
+            disabled: opts.disabled || value >= max,
             on: { click: () => onChange(value + 1) },
         });
         return h('div', { class: 'stepper', role: 'group', 'aria-label': label }, [
@@ -267,16 +269,20 @@
             h('p', { class: 'tag-code', text: `Código ${p.codigo}` }),
         ]);
         const parts = [tag, stockLine(p.stock, p.formato)];
+        const limit = C.productAddLimit(p);
 
         if (p.formato === 'granel') {
             parts.push(h('p', { class: 'msg msg-info', text: 'Este producto se pesa en caja, por eso no se agrega al carrito.' }));
+        } else if (!limit.canAdd) {
+            parts.push(h('button', { class: 'btn-out btn-wide', type: 'button', disabled: true, text: 'Sin stock: no se puede agregar al carrito' }));
         } else if (state.token) {
+            const qty = Math.min(state.addQty, limit.max);
             parts.push(h('div', { class: 'add-row' }, [
-                qtyStepper(state.addQty, (n) => { state.addQty = C.clampQuantity(n); renderProduct(); }, { label: 'cantidad a agregar', disabled: state.busy }),
+                qtyStepper(qty, (n) => { state.addQty = Math.min(C.clampQuantity(n), limit.max); renderProduct(); }, { label: 'cantidad a agregar', disabled: state.busy, max: limit.max }),
                 h('button', {
                     class: 'btn-primary btn-grow', type: 'button', disabled: state.busy,
                     text: state.busy ? 'Agregando…' : 'Agregar al carrito',
-                    on: { click: () => addItem(p, state.addQty) },
+                    on: { click: () => addItem(p, qty) },
                 }),
             ]));
         } else {
@@ -299,11 +305,26 @@
             const data = await api('api/tienda/carrito/items', {
                 method: 'POST', auth: true, body: { codigo: product.codigo, cantidad: C.clampQuantity(qty) },
             });
-            setCart(C.parseCartResponse(data));
+            const carrito = C.parseCartResponse(data);
+            setCart(carrito);
+            const notice = C.parseStockNotice(data);
             state.addQty = 1;
-            showToast(`Agregado: ${product.nombre}${qty > 1 ? ` (x${qty})` : ''}`);
+            if (notice) {
+                const saved = carrito.items.find((item) => item.codigo === product.codigo);
+                state.productMessage = { tone: 'warn', text: saved ? `${notice} Tu carrito quedó con ${saved.cantidad}.` : notice };
+                // La ficha muestra el stock que informó el servidor al agregar, no el de la consulta anterior.
+                if (saved && typeof saved.disponible === 'number' && state.lastProduct === product) {
+                    state.lastProduct = { ...product, stock: { ...product.stock, cantidad: saved.disponible } };
+                }
+            } else {
+                showToast(`Agregado: ${product.nombre}${qty > 1 ? ` (x${qty})` : ''}`);
+            }
         } catch (error) {
-            state.productMessage = { tone: 'error', text: error instanceof ApiError ? error.message : SHAPE_ERROR };
+            const stockCode = error.code === 'OUT_OF_STOCK' || error.code === 'STOCK_LIMIT';
+            state.productMessage = { tone: stockCode ? 'warn' : 'error', text: error instanceof ApiError ? error.message : SHAPE_ERROR };
+            if (error.code === 'OUT_OF_STOCK' && state.lastProduct === product) {
+                state.lastProduct = { ...product, stock: { estado: 'sin_stock', cantidad: 0 } };
+            }
             if (error.status === 401) {
                 state.busy = false;
                 showView('cuenta');
@@ -355,13 +376,20 @@
         if (state.busy) return;
         state.busy = true;
         state.cartActionError = '';
+        state.cartNotice = '';
         renderCart();
         try {
             const data = await run();
             setCart(C.parseCartResponse(data));
+            state.cartNotice = C.parseStockNotice(data);
         } catch (error) {
             state.cartActionError = error instanceof ApiError ? error.message : SHAPE_ERROR;
-            if (error.code === 'CART_LOCKED' || error.code === 'ITEM_NOT_FOUND') loadCart();
+            if (error.code === 'CART_STOCK_CHANGED') {
+                // El servidor devuelve el carrito con los ítems marcados; si no calza, se vuelve a pedir.
+                try { setCart(C.parseCartResponse(error.body)); } catch (_) { loadCart(); }
+            } else if (['CART_LOCKED', 'ITEM_NOT_FOUND', 'OUT_OF_STOCK', 'STOCK_LIMIT'].includes(error.code)) {
+                loadCart();
+            }
         } finally {
             state.busy = false;
         }
@@ -383,8 +411,10 @@
         cartAction(() => api('api/tienda/carrito/finalizar', { method: 'POST', auth: true }));
     }
 
-    function reopenCart() {
-        const ok = window.confirm('Si modificas el carrito, el código actual deja de servir y tendrás que pedir uno nuevo. ¿Continuar?');
+    // skipConfirm: el código ya venció, así que no hay nada que perder al reabrir.
+    function reopenCart(skipConfirm) {
+        const ok = skipConfirm === true
+            || window.confirm('Si modificas el carrito, el código actual deja de servir y tendrás que pedir uno nuevo. ¿Continuar?');
         if (!ok) return;
         cartAction(() => api('api/tienda/carrito/reabrir', { method: 'POST', auth: true }));
     }
@@ -406,22 +436,31 @@
         }
     }
 
-    function cartItemRow(item, editable) {
+    // mustAdjust: carrito enviado con código vencido y stock cambiado; el texto pide ajustar (no «en caja se ajusta»).
+    function cartItemRow(item, editable, mustAdjust) {
         const label = item.nombre;
+        const problem = C.describeItemProblem(item, editable || mustAdjust === true);
         const info = [
             h('p', { class: 'item-name', text: item.nombre }),
             h('p', { class: 'item-meta', text: `${C.formatPrice(item.precio)} c/u` }),
         ];
-        if (item.stock && item.stock.estado === 'sin_stock') {
-            info.push(h('p', { class: 'item-warn', text: 'Sin stock en la tienda ahora.' }));
+        if (problem) {
+            info.push(h('p', { class: 'item-warn', text: problem.text }));
+            if (editable && problem.adjustTo > 0) {
+                info.push(h('button', {
+                    class: 'btn-fix', type: 'button', disabled: state.busy, text: `Dejar ${problem.adjustTo}`,
+                    'aria-label': `Dejar ${problem.adjustTo} de ${label}`,
+                    on: { click: () => changeItemQty(item, problem.adjustTo) },
+                }));
+            }
         }
         const side = editable
             ? h('div', { class: 'item-side' }, [
-                qtyStepper(item.cantidad, (n) => changeItemQty(item, n), { label, disabled: state.busy }),
+                qtyStepper(item.cantidad, (n) => changeItemQty(item, n), { label, disabled: state.busy || item.problema === 'sin_stock', max: C.itemQtyMax(item) }),
                 h('button', { class: 'link link-danger', type: 'button', text: 'Quitar', disabled: state.busy, 'aria-label': `Quitar ${label}`, on: { click: () => removeItem(item) } }),
             ])
             : h('p', { class: 'item-qty', text: `x${item.cantidad}` });
-        return h('li', { class: 'item' }, [
+        return h('li', { class: problem ? 'item item-problem' : 'item' }, [
             h('div', { class: 'item-info' }, info),
             side,
             h('p', { class: 'item-subtotal', text: C.formatPrice(item.subtotal) }),
@@ -459,7 +498,7 @@
         const carrito = state.carrito;
         const actionError = state.cartActionError
             ? h('p', { class: 'msg msg-error', role: 'alert', text: state.cartActionError })
-            : null;
+            : (state.cartNotice ? h('p', { class: 'msg msg-warn', role: 'status', text: state.cartNotice }) : null);
 
         if (carrito.estado === 'retirado') {
             replaceContent(container, h('div', { class: 'empty' }, [
@@ -472,9 +511,18 @@
 
         if (carrito.estado === 'enviado') {
             const expiry = C.describeCodeExpiry(carrito.codigo_expira, Date.now());
-            const list = h('ul', { class: 'items' }, carrito.items.map((item) => cartItemRow(item, false)));
+            // Código vencido y stock cambiado: «Generar código nuevo» sería rechazado (CART_STOCK_CHANGED).
+            const mustAdjust = expiry.expired && carrito.bloqueado_por_stock;
+            const list = h('ul', { class: 'items' }, carrito.items.map((item) => cartItemRow(item, false, mustAdjust)));
             let ticket;
-            if (expiry.expired) {
+            if (mustAdjust) {
+                ticket = h('section', { class: 'ticket ticket-expired', 'aria-labelledby': 'ticket-title' }, [
+                    h('h2', { id: 'ticket-title', class: 'ticket-title', text: 'Tu código venció' }),
+                    h('p', { class: 'ticket-code ticket-code-old', text: C.formatCartCode(carrito.codigo) }),
+                    h('p', { class: 'ticket-sub', text: 'Cambió el stock de algunos productos (marcados en rojo). Ajusta tu carrito y luego pide un código nuevo.' }),
+                    h('button', { class: 'btn-primary', type: 'button', disabled: state.busy, text: state.busy ? 'Un momento…' : 'Ajustar mi carrito', on: { click: () => reopenCart(true) } }),
+                ]);
+            } else if (expiry.expired) {
                 ticket = h('section', { class: 'ticket ticket-expired', 'aria-labelledby': 'ticket-title' }, [
                     h('h2', { id: 'ticket-title', class: 'ticket-title', text: 'Tu código venció' }),
                     h('p', { class: 'ticket-code ticket-code-old', text: C.formatCartCode(carrito.codigo) }),
@@ -497,7 +545,7 @@
                 list,
                 cartTotal(carrito),
                 h('p', { class: 'note', text: 'En caja se cobra el precio y las promociones vigentes. Lo que se pesa o no tiene código lo agrega la cajera.' }),
-                h('button', { class: 'btn-secondary', type: 'button', disabled: state.busy, text: 'Modificar carrito', on: { click: reopenCart } }));
+                mustAdjust ? null : h('button', { class: 'btn-secondary', type: 'button', disabled: state.busy, text: 'Modificar carrito', on: { click: () => reopenCart(false) } }));
             return;
         }
 
@@ -520,7 +568,14 @@
             h('ul', { class: 'items' }, carrito.items.map((item) => cartItemRow(item, true))),
             cartTotal(carrito),
             h('button', { class: 'btn-secondary', type: 'button', disabled: state.busy, text: 'Seguir escaneando', on: { click: goScan } }),
-            h('button', { class: 'btn-primary btn-wide', type: 'button', disabled: state.busy, text: state.busy ? 'Un momento…' : 'Terminar y obtener código para caja', on: { click: finalizeCart } }),
+            carrito.bloqueado_por_stock
+                ? h('p', { id: 'finalize-blocked', class: 'msg msg-warn', text: 'Hay productos sin stock suficiente (marcados en rojo). Quítalos o ajústalos para terminar.' })
+                : null,
+            h('button', {
+                class: 'btn-primary btn-wide', type: 'button', disabled: state.busy || carrito.bloqueado_por_stock,
+                'aria-describedby': carrito.bloqueado_por_stock ? 'finalize-blocked' : null,
+                text: state.busy ? 'Un momento…' : 'Terminar y obtener código para caja', on: { click: finalizeCart },
+            }),
             h('p', { class: 'note', text: 'El código vence en 2 horas. El carrito no aparta productos: el stock puede cambiar.' }));
     }
 

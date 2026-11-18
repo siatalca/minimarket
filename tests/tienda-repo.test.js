@@ -100,13 +100,79 @@ test('reabrir solo actualiza si sigue enviado (no reabre un carrito retirado en 
 test('finalizar no pisa un carrito retirado: UPDATE exige abierto o enviado', async () => {
   const db = withConnection(fakeDb((sql) => {
     if (sql.includes('codigo_expira > NOW()) AS vigente')) return [[{ id: 4, estado: 'abierto', codigo: null, vigente: null }]];
-    if (sql.includes('COUNT(*)')) return [[{ total: 2 }]];
+    if (sql.includes('FROM tienda_carrito_items i')) return [[{ cantidad: 2, utiliza_inventario: 0, cantidad_actual: 0 }]];
     if (sql.trim().startsWith('UPDATE')) return [{ affectedRows: 0 }];
     return [[]];
   }));
   assert.deepEqual(await createTiendaRepo(db).finalizeCart(1, () => '000001'), { ok: true });
   const update = db.queries.find((q) => q.sql.startsWith('UPDATE tienda_carritos'));
   assert.match(update.sql, /WHERE id = \? AND estado IN \('abierto','enviado'\)$/);
+});
+
+// ---- M-038: stock leido de la base dentro del bloqueo de la cuenta ----
+
+function cartDb({ cart = { id: 4, estado: 'abierto', codigo: null, vigente: null }, stock, existing = null, items = [] } = {}) {
+  return withConnection(fakeDb((sql) => {
+    if (sql.includes('FOR UPDATE')) return [[{ id: 1 }]];
+    if (sql.includes('codigo_expira > NOW()) AS vigente')) return [cart ? [cart] : []];
+    if (sql.startsWith('SELECT utiliza_inventario, cantidad_actual FROM productos')) return [stock ? [stock] : []];
+    if (sql.includes('FROM tienda_carrito_items WHERE carrito_id = ? AND producto_id = ?')) return [existing ? [existing] : []];
+    if (sql.includes('FROM tienda_carrito_items WHERE id = ?')) return [[{ id: 9, producto_id: 3 }]];
+    if (sql.includes('FROM tienda_carrito_items i')) return [items];
+    if (sql.includes('COUNT(*)')) return [[{ total: 0 }]];
+    if (sql.trim().startsWith('INSERT') || sql.trim().startsWith('UPDATE')) return [{ insertId: 7, affectedRows: 1 }];
+    return [[]];
+  }));
+}
+
+test('M-038 agregar: lee el stock despues del bloqueo, sin bloquear productos, y guarda la cantidad limitada', async () => {
+  const db = cartDb({ stock: { utiliza_inventario: 1, cantidad_actual: '3.000' }, existing: { id: 11, cantidad: 2 } });
+  const result = await createTiendaRepo(db).addCartItem(1, 3, 5, { maxLines: 60, maxQty: 99 });
+  assert.deepEqual(result, { ok: true, limited: true, disponible: 3 });
+  const lockIndex = db.queries.findIndex((q) => q.sql.includes('FROM tienda_cuentas WHERE id = ? FOR UPDATE'));
+  const stockIndex = db.queries.findIndex((q) => q.sql.startsWith('SELECT utiliza_inventario, cantidad_actual FROM productos'));
+  assert.ok(lockIndex >= 0 && stockIndex > lockIndex, 'stock leido dentro del bloqueo');
+  assert.deepEqual(db.queries[stockIndex].params, [3]);
+  assert.doesNotMatch(db.queries[stockIndex].sql, /FOR UPDATE/);
+  const update = db.queries.find((q) => q.sql.startsWith('UPDATE tienda_carrito_items'));
+  assert.deepEqual(update.params, [3, 11]);
+});
+
+test('M-038 agregar sin stock o con todo lo disponible: no escribe nada', async () => {
+  const empty = cartDb({ cart: null, stock: { utiliza_inventario: 1, cantidad_actual: 0 } });
+  assert.deepEqual(await createTiendaRepo(empty).addCartItem(1, 3, 1, { maxLines: 60, maxQty: 99 }), { error: 'OUT_OF_STOCK', disponible: 0 });
+  assert.equal(empty.queries.some((q) => /^(INSERT|UPDATE)/.test(q.sql)), false, 'no crea carrito');
+
+  const full = cartDb({ stock: { utiliza_inventario: 1, cantidad_actual: 2 }, existing: { id: 11, cantidad: 2 } });
+  assert.deepEqual(await createTiendaRepo(full).addCartItem(1, 3, 1, { maxLines: 60, maxQty: 99 }), { error: 'STOCK_LIMIT', disponible: 2 });
+  assert.equal(full.queries.some((q) => /^(INSERT|UPDATE)/.test(q.sql)), false);
+
+  const gone = cartDb({ stock: null });
+  assert.deepEqual(await createTiendaRepo(gone).addCartItem(1, 3, 1, { maxLines: 60, maxQty: 99 }), { error: 'PRODUCT_NOT_FOUND' });
+});
+
+test('M-038 cambiar cantidad: sin stock 422 salvo quitar; el exceso se limita', async () => {
+  const out = cartDb({ stock: { utiliza_inventario: 1, cantidad_actual: 0 } });
+  assert.deepEqual(await createTiendaRepo(out).setCartItemQuantity(1, 9, 1), { error: 'OUT_OF_STOCK', disponible: 0 });
+  assert.equal(out.queries.some((q) => /^(UPDATE|DELETE)/.test(q.sql)), false);
+  const remove = cartDb({ stock: { utiliza_inventario: 1, cantidad_actual: 0 } });
+  assert.deepEqual(await createTiendaRepo(remove).setCartItemQuantity(1, 9, 0), { ok: true });
+  assert.ok(remove.queries.some((q) => q.sql.startsWith('DELETE FROM tienda_carrito_items')));
+
+  const limited = cartDb({ stock: { utiliza_inventario: 1, cantidad_actual: 4 } });
+  assert.deepEqual(await createTiendaRepo(limited).setCartItemQuantity(1, 9, 10), { ok: true, limited: true, disponible: 4 });
+  assert.deepEqual(limited.queries.find((q) => q.sql.startsWith('UPDATE tienda_carrito_items')).params, [4, 9, 4]);
+});
+
+test('M-038 finalizar con un item sin stock suficiente: CART_STOCK_CHANGED y no genera codigo', async () => {
+  const db = cartDb({ items: [
+    { cantidad: 2, utiliza_inventario: 0, cantidad_actual: 0 },
+    { cantidad: 5, utiliza_inventario: 1, cantidad_actual: '3.000' },
+  ] });
+  assert.deepEqual(await createTiendaRepo(db).finalizeCart(1, () => '000001'), { error: 'CART_STOCK_CHANGED' });
+  assert.equal(db.queries.some((q) => q.sql.startsWith('UPDATE tienda_carritos')), false);
+  const itemsSql = db.queries.find((q) => q.sql.includes('FROM tienda_carrito_items i')).sql;
+  assert.match(itemsSql, /p\.utiliza_inventario, p\.cantidad_actual/);
 });
 
 test('canje repetido por el mismo usuario dentro de 10 minutos devuelve el mismo carrito', async () => {

@@ -3,13 +3,13 @@
 // Nunca guarda ni responde nada de /api/: precios, stock, cuentas y carrito siempre van a la red.
 'use strict';
 
-const CACHE = 'consulta-v20261118a';
+const CACHE = 'consulta-v20261118c';
 const SHELL = [
     './',
-    './consulta.css?v=20261118a',
-    './consulta_core.js?v=20261118a',
+    './consulta.css?v=20261118b',
+    './consulta_core.js?v=20261118c',
     './consulta_ui.js?v=20261118a',
-    './consulta.js?v=20261118a',
+    './consulta.js?v=20261118c',
     './manifest.webmanifest',
     './icon-192.png',
     '../js/api_base.js?v=20261003a',
