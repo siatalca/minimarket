@@ -76,6 +76,8 @@ const config = {
   dte: {
     certSecret: env.DTE_CERT_SECRET || `${env.JWT_SECRET || 'minimarket_local'}_dte_cert_secret`,
   },
+  // ID de cliente OAuth de Google para la consulta de precios (M-037). Sin el, Google queda desactivado.
+  googleClientId: String(env.GOOGLE_CLIENT_ID || '').trim() || null,
 };
 
 if (!env.JWT_SECRET) {

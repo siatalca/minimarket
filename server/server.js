@@ -28,6 +28,11 @@ const {
   applyInventoryDelta, computeCancellationRestock, recordInventoryMovement, parseStrictQuantity, roundQty,
   createIdempotencyCache, normalizeRequestId,
 } = require('./inventory_core');
+// Consulta de precios por QR y carrito del cliente (M-037): reglas, base y rutas en tienda_*.js.
+const { createTiendaRepo } = require('./tienda_repo');
+const { createGoogleVerifier } = require('./tienda_google');
+const { registerTiendaRoutes, isTiendaPath } = require('./tienda_routes');
+const tiendaRepo = createTiendaRepo(db);
 // Ajustes de inventario ya aplicados, por identificador de formulario (evita sumar dos veces).
 const inventoryRequestCache = createIdempotencyCache();
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
@@ -4624,6 +4629,9 @@ async function ensureOperationalTables() {
        WHERE revoked_at IS NOT NULL OR expires_at < (NOW() - INTERVAL 2 DAY)`
     );
   }
+
+  // Cuentas, sesiones y carritos de clientes de la consulta de precios (M-037).
+  await tiendaRepo.ensureTables();
 }
 
 app.use(async (req, res, next) => {
@@ -4631,6 +4639,11 @@ app.use(async (req, res, next) => {
     return next();
   }
   if (req.method === 'OPTIONS') {
+    return next();
+  }
+  // Consulta de precios y carrito del cliente: publicas o con sesion de cliente (token propio,
+  // revisado en tienda_routes.js). No usan el JWT del personal ni leen req.user.
+  if (isTiendaPath(req.path)) {
     return next();
   }
   if (isPublicRoute(req)) {
@@ -4660,6 +4673,14 @@ app.use(async (req, res, next) => {
     }
     return res.status(401).json({ message: 'Token invalido', code: 'TOKEN_INVALID' });
   }
+});
+
+// Rutas /api/tienda/* (clientes) y las del personal para canjear el carrito y generar el QR.
+registerTiendaRoutes(app, {
+  repo: tiendaRepo,
+  googleClientId: config.googleClientId,
+  googleVerifier: config.googleClientId ? createGoogleVerifier({ clientId: config.googleClientId }) : null,
+  logInternalError,
 });
 
 const schemaSyncOnlyMode = String(process.env.DB_SCHEMA_SYNC_ONLY || '').trim() === '1';

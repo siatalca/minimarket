@@ -149,6 +149,11 @@
                     <img src="https://cdn-icons-gif.flaticon.com/11237/11237480.gif" alt="">
                     <span>Notificar<br>correo</span>
                 </li>
+                <!-- QR para que los clientes abran /consulta/ en su teléfono (M-037). Abre en ventana propia para imprimir. -->
+                <li class="panel-item" onclick="open_w('qr-consulta')">
+                    <img src="./img/cajero-automatico.png" alt="">
+                    <span>QR consulta<br>de precios</span>
+                </li>
             </ul>
             <div class="panel-upcoming">
                 <h4 class="panel-upcoming-title">Mejoras en camino</h4>

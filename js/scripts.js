@@ -7265,6 +7265,12 @@ function closePopupById(popupId) {
             return true;
         }
         break;
+    case 'customerCartPopUp':
+        if (typeof window.closeCustomerCartPopup === 'function') {
+            window.closeCustomerCartPopup();
+            return true;
+        }
+        break;
     case 'salesHistoryPopUp':
         if (typeof closeSalesSessionHistoryPopup === 'function') {
             closeSalesSessionHistoryPopup();

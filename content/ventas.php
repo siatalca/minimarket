@@ -37,6 +37,7 @@
                     <td class="quick-cell"><button id="sales-cash-exit-btn" data-permission-key="ventas_salida_efectivo" data-permission-mode="disable" class="btn btn2 quick-action-btn" type="button" onclick="openCashExitPopup()">F8 Salidas</button></td>
                     <td class="quick-cell"><button id="sales-remove-item-btn" data-permission-key="ventas_eliminar_articulo" data-permission-mode="disable" class="btn btn2 quick-action-btn" type="button" onclick="removeSelectedCartItem()">DEL Borrar</button></td>
                     <td class="quick-cell"><button id="sales-price-check-btn" class="btn btn2 quick-action-btn" type="button" onclick="openPriceCheckPopup()">F9 Verificador</button></td>
+                    <td class="quick-cell"><button id="sales-customer-cart-btn" class="btn btn2 quick-action-btn" type="button" onclick="openCustomerCartPopup()">Carrito cliente</button></td>
                 </tr>
             </table>
         </div>
@@ -457,6 +458,27 @@
                     <button class="btn2" type="button" onclick="lookupProductPrice()" style="height:28px; padding:4px 10px; min-width:80px; font-size:12px; width:80%;">Consultar</button>
                 </div>
             </div>
+        </div>
+    </div>
+    <!-- POPUP: Carrito del cliente (código de 6 dígitos que el cliente generó en /consulta/, M-037; lógica en js/carrito_cliente.js) -->
+    <div id="customerCartPopUp" class="hidden" role="dialog" aria-modal="true" aria-labelledby="customer-cart-title" style="position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9999; align-items:center; justify-content:center;">
+        <div class="contenidoPopUp" style="width:min(440px,94vw); max-width:440px; height:auto; margin:0; display:flex; flex-direction:column;">
+            <div class="popup-titulo">
+                <p id="customer-cart-title" class="popup-titulo-texto">Carrito del cliente</p>
+                <button class="popup-cerrar" type="button" aria-label="Cerrar" onclick="closeCustomerCartPopup()">
+                    <p>X</p>
+                </button>
+            </div>
+            <form class="popup-body" style="height:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px;" onsubmit="event.preventDefault(); submitCustomerCartCode();">
+                <label for="customer-cart-code" style="font-weight:600;">C&oacute;digo que muestra el cliente en su tel&eacute;fono</label>
+                <input id="customer-cart-code" type="text" inputmode="numeric" autocomplete="off" maxlength="8" class="form-input" placeholder="Ej: 482913" aria-describedby="customer-cart-help customer-cart-status" style="height:44px; font-size:24px; letter-spacing:4px; text-align:center;">
+                <p id="customer-cart-help" style="margin:0; font-size:13px; color:#4C6183;">El carrito se carga en el ticket actual. Despu&eacute;s puedes seguir agregando productos y cobrar con F12.</p>
+                <p id="customer-cart-status" class="hidden" role="alert" style="margin:0; padding:8px 10px; border-radius:6px; font-size:14px;"></p>
+                <div style="display:flex; justify-content:flex-end; gap:8px;">
+                    <button class="btn2" type="button" onclick="closeCustomerCartPopup()" style="height:38px; width:auto; min-width:110px; font-size:14px;">Cancelar</button>
+                    <button id="customer-cart-load-btn" class="btn2" type="submit" style="height:38px; width:auto; min-width:150px; font-size:14px; color:#fff; background:#0057B8; border-color:#00448F;">Cargar carrito</button>
+                </div>
+            </form>
         </div>
     </div>
     <div id="salesHistoryPopUp" class="hidden" style="position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:9999; align-items:center; justify-content:center;">
