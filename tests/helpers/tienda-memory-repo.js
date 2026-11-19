@@ -15,8 +15,43 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
     sessions: [],
     carts: [],
     items: [],
+    // Tablas del sistema que lee la consulta de administradores (M-039).
+    cajas: [],
+    usuarios: [],
+    ventas: [],
+    turnos: [],
     seq: { account: 0, session: 0, cart: 0, item: 0 },
   };
+
+  // LIKE de MariaDB (sin distinguir mayusculas): % cualquier texto, _ un caracter, \x literal.
+  function likeToRegExp(pattern) {
+    let source = '';
+    for (let i = 0; i < pattern.length; i += 1) {
+      const char = pattern[i];
+      if (char === '\\' && i + 1 < pattern.length) {
+        i += 1;
+        source += pattern[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      } else if (char === '%') source += '.*';
+      else if (char === '_') source += '.';
+      else source += char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${source}$`, 'is');
+  }
+
+  // Misma forma de fila que ADMIN_ACCOUNT_SELECT de tienda_repo.js.
+  function adminAccountRow(a) {
+    return {
+      id: a.id,
+      nombre: a.nombre,
+      telefono: a.telefono,
+      correo: a.correo,
+      google_vinculado: a.google_sub ? 1 : 0,
+      activo: a.activo,
+      created_at: a.created_at,
+      last_login_at: a.last_login_at,
+      carritos: state.carts.filter((c) => c.cuenta_id === a.id).length,
+    };
+  }
 
   function addProduct(row) {
     state.products.push({
@@ -86,6 +121,7 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
       state.seq.account += 1;
       state.accounts.push({
         id: state.seq.account, telefono, nombre, correo, google_sub: googleSub, clave_hash: claveHash, activo: 1,
+        created_at: new Date(now()), last_login_at: null,
       });
       return state.seq.account;
     },
@@ -94,6 +130,7 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
       state.sessions.push({
         id: state.seq.session, cuenta_id: cuentaId, token_hash: tokenHash, expires_at: now() + 60 * 86400000, revoked_at: null,
       });
+      state.accounts.find((a) => a.id === cuentaId).last_login_at = new Date(now());
     },
     async findSession(tokenHash) {
       const s = state.sessions.find((row) => row.token_hash === tokenHash && !row.revoked_at && row.expires_at > now());
@@ -151,6 +188,9 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
         cart = { id: state.seq.cart, cuenta_id: cuentaId, estado: 'abierto', codigo: null, codigo_expira: null, codigo_usado: null };
         state.carts.push(cart);
       }
+      cart = state.carts.find((c) => c.id === cart.id);
+      cart.created_at = cart.created_at || new Date(now());
+      cart.updated_at = new Date(now());
       if (state.items.filter((i) => i.carrito_id === cart.id).length >= maxLines) return { error: 'CART_LIMIT' };
       state.seq.item += 1;
       state.items.push({ id: state.seq.item, carrito_id: cart.id, producto_id: productoId, cantidad: decision.cantidad });
@@ -198,11 +238,12 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
       }
       return { ok: true };
     },
-    async redeemCartCode(codigo, userId) {
+    async redeemCartCode(codigo, userId, cajaId = null) {
       const cart = state.carts.find((c) => c.codigo === codigo);
       if (cart && cart.estado === 'enviado' && cart.codigo_expira > now()) {
         Object.assign(cart, {
           estado: 'retirado', codigo_usado: cart.codigo, codigo: null, retirado_user_id: userId, retirado_at: now(),
+          retirado_caja_id: cajaId || null,
         });
         return { ok: true, cartId: cart.id, cuentaId: cart.cuenta_id };
       }
@@ -223,6 +264,74 @@ function createMemoryRepo({ now = () => Date.now() } = {}) {
         if (!p) return { tienda_cantidad: i.cantidad, id_producto: null };
         return { tienda_cantidad: i.cantidad, ...p, departamento: 'Abarrotes', supplier_name: 'Proveedor X' };
       });
+    },
+    // ---- M-039 ----
+    // turnos: turnos abiertos de hoy { caja_id, usuario_id }.
+    async cajaHasOpenShift(numeroCaja, userId) {
+      return state.cajas.some((c) => c.n_caja === numeroCaja)
+        && state.turnos.some((t) => t.caja_id === numeroCaja && t.usuario_id === userId);
+    },
+    async linkCartToSale(cartId, ventaId, userId) {
+      const cart = state.carts.find((c) => c.id === cartId && c.estado === 'retirado'
+        && c.retirado_user_id === userId && !c.venta_id && c.retirado_at > now() - 86400000);
+      if (!cart) return false;
+      cart.venta_id = ventaId;
+      return true;
+    },
+    async listAccountsForAdmin({ likeTerm = null, telefonoTerm = null, limit, offset }) {
+      const like = likeTerm ? likeToRegExp(likeTerm) : null;
+      const phone = telefonoTerm ? likeToRegExp(telefonoTerm) : null;
+      const matches = state.accounts.filter((a) => !like
+        || like.test(a.nombre) || like.test(a.telefono) || like.test(a.correo) || (phone && phone.test(a.telefono)));
+      const sorted = [...matches].sort((a, b) => (b.created_at - a.created_at) || (b.id - a.id));
+      return { rows: sorted.slice(offset, offset + limit).map(adminAccountRow), total: matches.length };
+    },
+    async getAccountForAdmin(cuentaId) {
+      const account = state.accounts.find((a) => a.id === cuentaId);
+      return account ? adminAccountRow(account) : null;
+    },
+    async listCartsForAdmin(cuentaId, limit) {
+      return state.carts
+        .filter((c) => c.cuenta_id === cuentaId)
+        .sort((a, b) => b.id - a.id)
+        .slice(0, limit)
+        .map((c) => {
+          const caja = state.cajas.find((row) => row.n_caja === c.retirado_caja_id);
+          const user = state.usuarios.find((row) => row.id === c.retirado_user_id);
+          const venta = state.ventas.find((row) => row.id_venta === c.venta_id);
+          return {
+            id: c.id,
+            estado: c.estado,
+            codigo: c.codigo,
+            codigo_usado: c.codigo_usado,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
+            codigo_expira: c.codigo_expira ? new Date(c.codigo_expira) : null,
+            retirado_at: c.retirado_at ? new Date(c.retirado_at) : null,
+            retirado_caja_id: c.retirado_caja_id || null,
+            caja_nombre: caja ? caja.nombre_caja : null,
+            retirado_user_id: c.retirado_user_id || null,
+            cajera_nombre: user ? user.nombre : null,
+            venta_id: c.venta_id || null,
+            venta_fecha: venta ? venta.fecha : null,
+            venta_total: venta ? venta.total : null,
+          };
+        });
+    },
+    async listCartItemsForAdmin(cartIds) {
+      return state.items
+        .filter((i) => cartIds.includes(i.carrito_id))
+        .map((i) => {
+          const p = state.products.find((row) => row.id_producto === i.producto_id);
+          return {
+            carrito_id: i.carrito_id,
+            cantidad: i.cantidad,
+            id_producto: p ? p.id_producto : null,
+            codigo_barras: p ? p.codigo_barras : null,
+            descripcion: p ? p.descripcion : null,
+            precio_venta: p ? p.precio_venta : null,
+          };
+        });
     },
   };
   return repo;

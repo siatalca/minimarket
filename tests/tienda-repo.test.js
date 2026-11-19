@@ -19,15 +19,91 @@ function fakeDb(responder = () => [[]]) {
   return db;
 }
 
-test('ensureTables solo usa CREATE TABLE IF NOT EXISTS de tablas tienda_*', async () => {
+test('ensureTables solo usa CREATE TABLE IF NOT EXISTS de tablas tienda_* y agrega venta_id si falta', async () => {
   const db = fakeDb();
   await createTiendaRepo(db).ensureTables();
-  assert.equal(db.queries.length, 4);
-  for (const q of db.queries) {
+  assert.equal(db.queries.length, 6);
+  for (const q of db.queries.slice(0, 4)) {
     assert.match(q.sql, /^CREATE TABLE IF NOT EXISTS tienda_(cuentas|sesiones|carritos|carrito_items) \(/);
     assert.doesNotMatch(q.sql, /\b(DROP|ALTER|TRUNCATE)\b|DELETE FROM/i);
     assert.doesNotMatch(q.sql, /REFERENCES productos/i, 'sin llave foranea a productos');
   }
+  assert.match(db.queries[2].sql, /venta_id INT NULL/, 'instalacion nueva ya trae la columna');
+  assert.match(db.queries[4].sql, /^SELECT COLUMN_NAME FROM information_schema\.COLUMNS WHERE TABLE_SCHEMA = DATABASE\(\) AND TABLE_NAME = 'tienda_carritos'$/);
+  assert.equal(db.queries[5].sql, 'ALTER TABLE tienda_carritos ADD COLUMN venta_id INT NULL AFTER retirado_user_id');
+});
+
+test('ensureTables: con venta_id ya creada no hace ALTER (idempotente)', async () => {
+  const db = fakeDb((sql) => (sql.includes('information_schema') ? [[{ COLUMN_NAME: 'id' }, { COLUMN_NAME: 'venta_id' }]] : [[]]));
+  await createTiendaRepo(db).ensureTables();
+  assert.equal(db.queries.length, 5);
+  assert.ok(db.queries.every((q) => !/\b(DROP|ALTER|TRUNCATE)\b|DELETE FROM/i.test(q.sql)));
+});
+
+test('canje guarda la caja; vinculo con la venta exige retirado, mismo usuario y sin venta', async () => {
+  const db = fakeDb((sql) => {
+    if (sql.startsWith('SELECT id, cuenta_id')) return [[{ id: 8, cuenta_id: 2 }]];
+    if (sql.trim().startsWith('UPDATE')) return [{ affectedRows: 1 }];
+    return [[]];
+  });
+  const repo = createTiendaRepo(db);
+  await repo.redeemCartCode('123456', 5, 3);
+  assert.match(db.queries[1].sql, /retirado_user_id = \?, retirado_caja_id = \?/);
+  assert.deepEqual(db.queries[1].params, [5, 3, 8, '123456']);
+  await repo.redeemCartCode('123456', 5);
+  assert.deepEqual(db.queries[3].params, [5, null, 8, '123456'], 'sin caja queda NULL');
+
+  assert.equal(await repo.linkCartToSale(8, 900, 5), true);
+  const link = db.queries[4];
+  assert.equal(link.sql, "UPDATE tienda_carritos SET venta_id = ? WHERE id = ? AND estado = 'retirado' AND retirado_user_id = ? AND venta_id IS NULL AND retirado_at > NOW() - INTERVAL 1 DAY");
+  assert.deepEqual(link.params, [900, 8, 5]);
+
+  const none = createTiendaRepo(fakeDb(() => [{ affectedRows: 0 }]));
+  assert.equal(await none.linkCartToSale(8, 900, 6), false);
+
+  const cajaDb = fakeDb(() => [[{ id_corte: 4 }]]);
+  assert.equal(await createTiendaRepo(cajaDb).cajaHasOpenShift(3, 5), true);
+  const shift = cajaDb.queries[0];
+  assert.match(shift.sql, /FROM corte_caja c WHERE c\.fecha = CURDATE\(\) AND c\.caja_id = \? AND c\.usuario_id = \? AND c\.estado = 'abierto'/);
+  assert.match(shift.sql, /EXISTS \(SELECT 1 FROM cajas cj WHERE cj\.n_caja = c\.caja_id\)/);
+  assert.deepEqual(shift.params, [3, 5]);
+  assert.equal(await createTiendaRepo(fakeDb(() => [[]])).cajaHasOpenShift(3, 5), false);
+});
+
+test('consulta de administradores: SQL parametrizado y sin clave_hash, token_hash ni google_sub en bruto', async () => {
+  const db = fakeDb((sql) => (sql.includes('COUNT(*) AS total FROM tienda_cuentas') && !sql.includes('ORDER BY') ? [[{ total: 7 }]] : [[]]));
+  const repo = createTiendaRepo(db);
+  const result = await repo.listAccountsForAdmin({ likeTerm: "%a' OR 1=1 --%", telefonoTerm: '%1234%', limit: 50, offset: 50 });
+  assert.deepEqual(result, { rows: [], total: 7 });
+  const [count, list] = db.queries;
+  // ESCAPE '\\' en el SQL enviado (dos barras en la cadena SQL = una barra literal).
+  const esc = " ESCAPE '\\\\'";
+  assert.ok(count.sql.includes(`WHERE (c.nombre LIKE ?${esc} OR c.telefono LIKE ?${esc} OR c.correo LIKE ?${esc} OR c.telefono LIKE ?${esc})`), count.sql);
+  assert.equal(esc.length, 12);
+  assert.deepEqual(count.params, ["%a' OR 1=1 --%", "%a' OR 1=1 --%", "%a' OR 1=1 --%", '%1234%']);
+  assert.match(list.sql, /ORDER BY c\.created_at DESC, c\.id DESC LIMIT \? OFFSET \?$/);
+  assert.deepEqual(list.params.slice(-2), [50, 50]);
+  assert.ok(!list.sql.includes("OR 1=1"), 'el texto no entra al SQL');
+
+  await repo.listAccountsForAdmin({ limit: 50, offset: 0 });
+  assert.doesNotMatch(db.queries[2].sql, /WHERE/, 'sin busqueda no filtra');
+  assert.deepEqual(db.queries[3].params, [50, 0]);
+
+  await repo.getAccountForAdmin(4);
+  await repo.listCartsForAdmin(4, 100);
+  await repo.listCartItemsForAdmin([3, 2]);
+  assert.equal(await repo.listCartItemsForAdmin([]).then((rows) => rows.length), 0);
+  const adminQueries = db.queries.slice(1);
+  assert.equal(db.queries.length, 7, 'sin carritos no consulta items');
+  for (const q of adminQueries) {
+    assert.doesNotMatch(q.sql, /clave_hash|token_hash|tienda_sesiones|p\.\*|costo|ganancia/);
+    assert.doesNotMatch(q.sql.replace('(c.google_sub IS NOT NULL) AS google_vinculado', ''), /google_sub/);
+  }
+  assert.deepEqual(db.queries[5].params, [4, 100]);
+  assert.match(db.queries[5].sql, /LEFT JOIN usuarios u ON u\.id = t\.retirado_user_id/);
+  assert.match(db.queries[5].sql, /LEFT JOIN ventas v ON v\.id_venta = t\.venta_id/);
+  assert.match(db.queries[5].sql, /FROM cajas cj WHERE cj\.n_caja = t\.retirado_caja_id ORDER BY cj\.id_caja ASC LIMIT 1/);
+  assert.deepEqual(db.queries[6].params, [[3, 2]]);
 });
 
 test('consulta publica de producto: columnas explicitas, sin p.* ni datos internos', async () => {
@@ -57,7 +133,7 @@ test('canje: el UPDATE condicional exige enviado y vigente; affectedRows decide'
   const update = db.queries[1].sql;
   assert.match(update, /WHERE id = \? AND codigo = \? AND estado = 'enviado' AND codigo_expira > NOW\(\)/);
   assert.match(update, /codigo_usado = codigo, codigo = NULL/);
-  assert.deepEqual(db.queries[1].params, [5, 8, '123456']);
+  assert.deepEqual(db.queries[1].params, [5, null, 8, '123456'], 'sin caja (M-039): NULL');
 });
 
 test('canje perdido en carrera: devuelve el estado para clasificar (409)', async () => {

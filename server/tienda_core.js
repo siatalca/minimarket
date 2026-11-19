@@ -287,6 +287,7 @@ module.exports = {
   stockLimitedNotice,
   toPublicProduct,
   toPublicAccount,
+  toIsoDate,
   buildCartResponse,
   hashToken,
   generateSessionToken,

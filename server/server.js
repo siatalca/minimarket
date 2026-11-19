@@ -32,6 +32,8 @@ const {
 const { createTiendaRepo } = require('./tienda_repo');
 const { createGoogleVerifier } = require('./tienda_google');
 const { registerTiendaRoutes, isTiendaPath } = require('./tienda_routes');
+// Clientes de la app para administradores y vinculo carrito-venta (M-039).
+const { registerTiendaAdminRoutes, linkCustomerCartToSale } = require('./tienda_admin');
 const tiendaRepo = createTiendaRepo(db);
 // Ajustes de inventario ya aplicados, por identificador de formulario (evita sumar dos veces).
 const inventoryRequestCache = createIdempotencyCache();
@@ -4681,7 +4683,10 @@ registerTiendaRoutes(app, {
   googleClientId: config.googleClientId,
   googleVerifier: config.googleClientId ? createGoogleVerifier({ clientId: config.googleClientId }) : null,
   logInternalError,
+  resolveStaffCajaId: (userId) => resolveCurrentCajaIdForUser(userId),
 });
+// /api/admin/tienda/*: consulta de clientes de la app, solo administradores (M-039).
+registerTiendaAdminRoutes(app, { repo: tiendaRepo, requireAdministrator, logInternalError });
 
 const schemaSyncOnlyMode = String(process.env.DB_SCHEMA_SYNC_ONLY || '').trim() === '1';
 const schemaCreateOnlyMode = String(process.env.DB_SCHEMA_CREATE_ONLY || '').trim() === '1';
@@ -15099,6 +15104,10 @@ app.post('/api/sales', async (req, res) => {
     });
 
     await connection.commit();
+
+    // Carrito del cliente cargado en este ticket (M-039). Solo vincula; nunca lanza ni hace fallar la venta.
+    // Sin await: no demora la respuesta (los errores se registran dentro).
+    void linkCustomerCartToSale(tiendaRepo, req.body?.carrito_cliente_id, ventaId, toInt(req.user?.sub), { logInternalError });
 
     try {
       const [drawerRows] = await db.query(

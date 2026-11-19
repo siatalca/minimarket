@@ -908,6 +908,7 @@ function restoreCartState() {
 function clearCartState() {
     const key = buildCartStorageKey();
     if (!key) return;
+    window.CustomerCartLink?.clear();
     localStorage.removeItem(key);
 }
 
@@ -932,10 +933,16 @@ function readPendingTicketsState() {
             numero_ticket: Number(row?.numero_ticket || 0),
             created_at: String(row?.created_at || ''),
             cart: normalizeCartStateItems(row?.cart),
+            carrito_cliente_id: normalizePendingCustomerCartId(row?.carrito_cliente_id),
         })).filter((row) => row.id && row.numero_ticket > 0 && Array.isArray(row.cart) && row.cart.length > 0);
     } catch (_) {
         return [];
     }
+}
+
+// Un ticket pendiente (F5) conserva el carrito del cliente que se cargó en él (M-039).
+function normalizePendingCustomerCartId(value) {
+    return window.CustomerCartCore?.normalizeCartLinkId(value) || null;
 }
 
 function writePendingTicketsState(list) {
@@ -946,6 +953,7 @@ function writePendingTicketsState(list) {
         numero_ticket: Number(row?.numero_ticket || 0),
         created_at: String(row?.created_at || ''),
         cart: normalizeCartStateItems(row?.cart),
+        carrito_cliente_id: normalizePendingCustomerCartId(row?.carrito_cliente_id),
     })).filter((row) => row.id && row.numero_ticket > 0 && row.cart.length > 0);
     localStorage.setItem(key, JSON.stringify(normalized));
     renderPendingTicketsInlineStrip();
@@ -1126,6 +1134,7 @@ async function leaveCurrentTicketAsPending() {
         numero_ticket: currentTicket,
         created_at: new Date().toISOString(),
         cart: normalizeCartStateItems(cart),
+        carrito_cliente_id: window.CustomerCartLink?.get() || null,
     };
 
     const updatedPending = [newPendingRow, ...pendingTickets.filter((row) => Number(row.numero_ticket || 0) !== currentTicket)];
@@ -1173,6 +1182,7 @@ async function resumePendingTicketById(pendingId) {
             numero_ticket: currentTicket,
             created_at: new Date().toISOString(),
             cart: currentCartSnapshot,
+            carrito_cliente_id: window.CustomerCartLink?.get() || null,
         };
         remaining = [
             autoPendingRow,
@@ -1182,6 +1192,7 @@ async function resumePendingTicketById(pendingId) {
     writePendingTicketsState(remaining);
 
     cart = normalizeCartStateItems(pending.cart);
+    window.CustomerCartLink?.set(pending.carrito_cliente_id);
     selectedCartIndex = -1;
     setDisplayedTicketNumber(pending.numero_ticket);
     clearPaymentWarning();
@@ -7037,6 +7048,8 @@ function updateCartUI() {
     }
     updateSalesSessionStrip();
     renderPendingTicketsInlineStrip();
+    // Ticket vacío (cobrado, vaciado o dejado pendiente): ya no corresponde al carrito del cliente (M-039).
+    if (cart.length === 0) window.CustomerCartLink?.clear();
     persistCartState();
 }
 
@@ -7502,6 +7515,9 @@ async function finalizeSale(printReceipt = true) {
         monto_tarjeta: paymentAllocation.monto_tarjeta,
         producto: cart,
     };
+    // Carrito del cliente cargado en este ticket (M-039): el servidor vincula la venta si calza; si no, cobra igual.
+    const carritoClienteId = window.CustomerCartLink?.get() || null;
+    if (carritoClienteId) venta.carrito_cliente_id = carritoClienteId;
 
     if (!caja) {
         alert("No hay caja configurada para esta sesión.");

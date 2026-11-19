@@ -72,6 +72,7 @@ function createTiendaRepo(db) {
         retirado_at DATETIME NULL,
         retirado_caja_id INT NULL,
         retirado_user_id INT NULL,
+        venta_id INT NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uq_tienda_carritos_codigo (codigo),
@@ -91,6 +92,17 @@ function createTiendaRepo(db) {
         CONSTRAINT fk_tienda_items_carrito FOREIGN KEY (carrito_id) REFERENCES tienda_carritos(id) ON DELETE CASCADE
       )
     `);
+    // Columnas agregadas despues de crear la tabla (M-039). CREATE TABLE IF NOT EXISTS no las agrega
+    // a una tabla que ya existe: se revisa information_schema y se agregan sin tocar los datos.
+    const [cartColumnRows] = await db.query(
+      `SELECT COLUMN_NAME
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tienda_carritos'`
+    );
+    const cartColumns = new Set(cartColumnRows.map((row) => row.COLUMN_NAME));
+    if (!cartColumns.has('venta_id')) {
+      await db.query('ALTER TABLE tienda_carritos ADD COLUMN venta_id INT NULL AFTER retirado_user_id');
+    }
   }
 
   async function getBusinessName() {
@@ -383,15 +395,16 @@ function createTiendaRepo(db) {
 
   // Canje en caja. El UPDATE condicional es el que decide: solo un pedido puede pasar el carrito
   // de 'enviado' a 'retirado'. Devuelve { ok, cartId, cuentaId } o { pending, used } para clasificar.
-  async function redeemCartCode(codigo, userId) {
+  // cajaId: numero de la caja donde se cargo (M-039), o null si no se pudo saber.
+  async function redeemCartCode(codigo, userId, cajaId = null) {
     const [rows] = await db.query('SELECT id, cuenta_id FROM tienda_carritos WHERE codigo = ? LIMIT 1', [codigo]);
     if (rows.length) {
       const [result] = await db.query(
         `UPDATE tienda_carritos
          SET estado = 'retirado', codigo_usado = codigo, codigo = NULL,
-             retirado_at = NOW(), retirado_user_id = ?
+             retirado_at = NOW(), retirado_user_id = ?, retirado_caja_id = ?
          WHERE id = ? AND codigo = ? AND estado = 'enviado' AND codigo_expira > NOW()`,
-        [userId || null, rows[0].id, codigo]
+        [userId || null, cajaId || null, rows[0].id, codigo]
       );
       if (Number(result?.affectedRows || 0) === 1) {
         return { ok: true, cartId: rows[0].id, cuentaId: rows[0].cuenta_id };
@@ -449,6 +462,108 @@ function createTiendaRepo(db) {
     return rows;
   }
 
+  // ---- Caja y venta del carrito (M-039) ----
+
+  // La caja existe y el usuario tiene ahi su turno abierto de hoy (misma regla que POST /api/sales).
+  async function cajaHasOpenShift(numeroCaja, userId) {
+    const [rows] = await db.query(
+      `SELECT c.id_corte
+       FROM corte_caja c
+       WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.usuario_id = ? AND c.estado = 'abierto'
+         AND EXISTS (SELECT 1 FROM cajas cj WHERE cj.n_caja = c.caja_id)
+       LIMIT 1`,
+      [numeroCaja, userId]
+    );
+    return rows.length > 0;
+  }
+
+  // Vincula la venta solo al carrito que retiro el mismo usuario en el ultimo dia y que aun no tiene venta.
+  // Devuelve true si quedo vinculado.
+  async function linkCartToSale(cartId, ventaId, userId) {
+    const [result] = await db.query(
+      `UPDATE tienda_carritos
+       SET venta_id = ?
+       WHERE id = ? AND estado = 'retirado' AND retirado_user_id = ? AND venta_id IS NULL
+         AND retirado_at > NOW() - INTERVAL 1 DAY`,
+      [ventaId, cartId, userId]
+    );
+    return Number(result?.affectedRows || 0) === 1;
+  }
+
+  // ---- Consulta de administradores (M-039), solo lectura ----
+  // Columnas explicitas: nunca clave_hash ni google_sub (solo si esta vinculado).
+
+  const ADMIN_ACCOUNT_SELECT = `c.id, c.nombre, c.telefono, c.correo,
+              (c.google_sub IS NOT NULL) AS google_vinculado, c.activo,
+              c.created_at, c.last_login_at,
+              (SELECT COUNT(*) FROM tienda_carritos t WHERE t.cuenta_id = c.id) AS carritos`;
+
+  // likeTerm: patron LIKE ya escapado (o null = sin filtro). telefonoTerm: patron extra solo para el telefono.
+  function adminSearchWhere(likeTerm, telefonoTerm) {
+    if (!likeTerm) return { where: '', params: [] };
+    // ESCAPE '\\' explicito (en SQL): el escape de escapeLike en tienda_admin.js.
+    const clauses = ["c.nombre LIKE ? ESCAPE '\\\\'", "c.telefono LIKE ? ESCAPE '\\\\'", "c.correo LIKE ? ESCAPE '\\\\'"];
+    const params = [likeTerm, likeTerm, likeTerm];
+    if (telefonoTerm) {
+      clauses.push("c.telefono LIKE ? ESCAPE '\\\\'");
+      params.push(telefonoTerm);
+    }
+    return { where: `WHERE (${clauses.join(' OR ')})`, params };
+  }
+
+  async function listAccountsForAdmin({ likeTerm = null, telefonoTerm = null, limit, offset }) {
+    const { where, params } = adminSearchWhere(likeTerm, telefonoTerm);
+    const [countRows] = await db.query(`SELECT COUNT(*) AS total FROM tienda_cuentas c ${where}`, params);
+    const [rows] = await db.query(
+      `SELECT ${ADMIN_ACCOUNT_SELECT}
+       FROM tienda_cuentas c
+       ${where}
+       ORDER BY c.created_at DESC, c.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+    return { rows, total: Number(countRows[0]?.total || 0) };
+  }
+
+  async function getAccountForAdmin(cuentaId) {
+    const [rows] = await db.query(`SELECT ${ADMIN_ACCOUNT_SELECT} FROM tienda_cuentas c WHERE c.id = ? LIMIT 1`, [cuentaId]);
+    return rows[0] || null;
+  }
+
+  // Carritos de la cuenta, del mas nuevo al mas antiguo, con la caja, la cajera y la venta.
+  // La caja se lee con subconsulta (LIMIT 1) para no duplicar filas si el numero se repite.
+  async function listCartsForAdmin(cuentaId, limit) {
+    const [rows] = await db.query(
+      `SELECT t.id, t.estado, t.codigo, t.codigo_usado, t.created_at, t.updated_at, t.codigo_expira,
+              t.retirado_at, t.retirado_caja_id,
+              (SELECT cj.nombre_caja FROM cajas cj WHERE cj.n_caja = t.retirado_caja_id ORDER BY cj.id_caja ASC LIMIT 1) AS caja_nombre,
+              t.retirado_user_id, u.nombre AS cajera_nombre,
+              t.venta_id, v.fecha AS venta_fecha, v.total AS venta_total
+       FROM tienda_carritos t
+       LEFT JOIN usuarios u ON u.id = t.retirado_user_id
+       LEFT JOIN ventas v ON v.id_venta = t.venta_id
+       WHERE t.cuenta_id = ?
+       ORDER BY t.id DESC
+       LIMIT ?`,
+      [cuentaId, limit]
+    );
+    return rows;
+  }
+
+  // Productos de los carritos con su precio actual. Producto borrado: columnas p.* en NULL.
+  async function listCartItemsForAdmin(cartIds) {
+    if (!cartIds.length) return [];
+    const [rows] = await db.query(
+      `SELECT i.carrito_id, i.cantidad, p.id_producto, p.codigo_barras, p.descripcion, p.precio_venta
+       FROM tienda_carrito_items i
+       LEFT JOIN productos p ON p.id_producto = i.producto_id
+       WHERE i.carrito_id IN (?)
+       ORDER BY i.carrito_id DESC, i.id ASC`,
+      [cartIds]
+    );
+    return rows;
+  }
+
   return {
     ensureTables,
     getBusinessName,
@@ -469,6 +584,12 @@ function createTiendaRepo(db) {
     reopenCart,
     redeemCartCode,
     getRedeemedCartProducts,
+    cajaHasOpenShift,
+    linkCartToSale,
+    listAccountsForAdmin,
+    getAccountForAdmin,
+    listCartsForAdmin,
+    listCartItemsForAdmin,
   };
 }
 

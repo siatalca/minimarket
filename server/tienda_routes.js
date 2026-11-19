@@ -66,6 +66,8 @@ function registerTiendaRoutes(app, {
   logInternalError = (err) => { console.error(err); return 'Error interno del servidor'; },
   limits = {},
   generateCartCode = core.generateCartCode,
+  // Caja de la sesion del personal (M-039): async (userId) => numero de caja o null.
+  resolveStaffCajaId = async () => null,
 } = {}) {
   const L = { ...DEFAULT_LIMITS, ...limits };
   const consultaIpLimiter = createRateLimiter({ max: L.consultaIp, windowMs: TEN_MINUTES_MS });
@@ -481,6 +483,24 @@ function registerTiendaRoutes(app, {
 
   // ---------------- Personal (JWT del personal, revisado por el middleware de server.js) ----------------
 
+  // Caja donde se carga el carrito (M-039): caja_id del cuerpo (la del equipo) si existe en cajas y el
+  // usuario tiene ahi su turno abierto de hoy; si no, la de la sesion del personal; si no, null.
+  // No saberla nunca impide cargar el carrito.
+  async function resolveRedeemCajaId(req, userId) {
+    try {
+      const fromBody = core.parseItemId(req.body?.caja_id);
+      if (fromBody && await repo.cajaHasOpenShift(fromBody, userId)) return fromBody;
+    } catch (err) {
+      logInternalError(err);
+    }
+    try {
+      return core.parseItemId(await resolveStaffCajaId(userId));
+    } catch (err) {
+      logInternalError(err);
+    }
+    return null;
+  }
+
   app.post('/api/ventas/carrito-cliente/cargar', async (req, res) => {
     const userId = Number(req.user?.sub || 0);
     if (!userId) return sendError(res, 401, 'TOKEN_INVALID', 'Token invalido');
@@ -490,7 +510,8 @@ function registerTiendaRoutes(app, {
     const codigo = core.normalizeCartCode(req.body?.codigo);
     if (!codigo) return sendError(res, 400, 'INVALID_CODE', 'El codigo tiene 6 digitos.');
     try {
-      const redeemed = await repo.redeemCartCode(codigo, userId);
+      const cajaId = await resolveRedeemCajaId(req, userId);
+      const redeemed = await repo.redeemCartCode(codigo, userId, cajaId);
       if (!redeemed.ok) {
         const failure = core.classifyRedeemFailure(redeemed);
         return sendError(res, failure.status, failure.code, failure.message);
@@ -510,6 +531,7 @@ function registerTiendaRoutes(app, {
         }
       }
       return res.json({
+        carrito_id: Number(redeemed.cartId),
         cliente: { nombre: String(account?.nombre || ''), telefono: String(account?.telefono || '') },
         items,
         faltantes,

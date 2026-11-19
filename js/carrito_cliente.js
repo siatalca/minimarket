@@ -42,7 +42,25 @@
             faltantes: data.faltantes
                 .filter(isPlainObject)
                 .map((row) => ({ nombre: String(row.nombre ?? ''), motivo: String(row.motivo ?? '') })),
+            // M-039: id del carrito para vincularlo con la venta al cobrar. Un servidor antiguo no lo envía.
+            carrito_id: normalizeCartLinkId(data.carrito_id),
         };
+    }
+
+    // Cuerpo de POST /api/ventas/carrito-cliente/cargar. caja_id es la caja de este equipo (n_caja, la misma que
+    // numero_caja en la venta), solo si es un entero positivo; si no, no se envía (M-039).
+    function buildCustomerCartLoadBody(code, rawBoxId) {
+        const body = { codigo: code };
+        const boxId = normalizeCartLinkId(rawBoxId);
+        if (boxId) body.caja_id = boxId;
+        return body;
+    }
+
+    // Id del carrito del cliente que viaja en POST /api/sales como carrito_cliente_id (M-039).
+    // Solo enteros positivos (número o texto de dígitos); cualquier otra cosa es «sin vínculo» (null).
+    function normalizeCartLinkId(value) {
+        const parsed = typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
     }
 
     // Arma el carrito nuevo de Ventas sin tocar el original.
@@ -109,7 +127,7 @@
         return 'No se pudo cargar el carrito del cliente. Intenta de nuevo.';
     }
 
-    return { normalizeCustomerCartCode, parseCustomerCartResponse, planCustomerCartLoad, customerCartErrorMessage };
+    return { normalizeCustomerCartCode, parseCustomerCartResponse, planCustomerCartLoad, customerCartErrorMessage, normalizeCartLinkId, buildCustomerCartLoadBody };
 });
 
 // ---------- Navegador (Ventas) ----------
@@ -118,6 +136,48 @@
     if (typeof window === 'undefined' || !window.document || !window.CustomerCartCore) return;
     const core = window.CustomerCartCore;
     let inFlight = false;
+
+    // Vínculo del ticket actual con el carrito del cliente (M-039). Se guarda junto al carrito de Ventas
+    // (misma clave de caja, cajera y turno) para que sobreviva a recargar la página; Ventas lo envía al cobrar
+    // y lo borra cuando el ticket queda vacío (cobrado, vaciado o dejado pendiente con F5).
+    function readLocalBoxId() {
+        try {
+            return window.localStorage.getItem('n_caja') || window.localStorage.getItem('caja') || '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function linkStorageKey() {
+        const cartKey = typeof buildCartStorageKey === 'function' ? buildCartStorageKey() : null;
+        return cartKey ? `customer_cart_link_${cartKey}` : null;
+    }
+
+    const CustomerCartLink = {
+        get() {
+            const key = linkStorageKey();
+            if (!key) return null;
+            try {
+                return core.normalizeCartLinkId(window.localStorage.getItem(key));
+            } catch (_) {
+                return null;
+            }
+        },
+        set(value) {
+            const key = linkStorageKey();
+            const id = core.normalizeCartLinkId(value);
+            if (!key) return;
+            try {
+                if (id) window.localStorage.setItem(key, String(id));
+                else window.localStorage.removeItem(key);
+            } catch (_) {
+                // Sin almacenamiento la venta se cobra igual; solo no queda vinculada al carrito.
+            }
+        },
+        clear() {
+            this.set(null);
+        },
+    };
 
     function el(id) {
         return document.getElementById(id);
@@ -219,7 +279,7 @@
             response = await fetch(`${API_URL}api/ventas/carrito-cliente/cargar`, {
                 method: 'POST',
                 headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ codigo: code }),
+                body: JSON.stringify(core.buildCustomerCartLoadBody(code, readLocalBoxId())),
             });
             body = await response.json().catch(() => null);
         } catch (_) {
@@ -252,6 +312,8 @@
         });
         cart = plan.cart;
         selectedCartIndex = cart.length ? cart.length - 1 : -1;
+        // El ticket estaba vacío (se exige arriba), así que el carrito del cliente es todo el ticket.
+        CustomerCartLink.set(plan.loadedLines > 0 ? parsed.carrito_id : null);
         updateCartUI();
         closeCustomerCartPopup();
 
@@ -276,6 +338,7 @@
         return loadCustomerCartByCode(input ? input.value : '');
     }
 
+    window.CustomerCartLink = CustomerCartLink;
     window.openCustomerCartPopup = openCustomerCartPopup;
     window.closeCustomerCartPopup = closeCustomerCartPopup;
     window.submitCustomerCartCode = submitCustomerCartCode;

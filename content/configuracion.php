@@ -154,6 +154,11 @@
                     <img src="./img/cajero-automatico.png" alt="">
                     <span>QR consulta<br>de precios</span>
                 </li>
+                <!-- Clientes registrados en la app y sus carritos, solo lectura (M-039). El servidor responde 403 a los cajeros. -->
+                <li class="panel-item" data-admin-only="1" onclick="open_w('clientes-app')">
+                    <img src="./img/usuario.png" alt="">
+                    <span>Clientes<br>de la app</span>
+                </li>
             </ul>
             <div class="panel-upcoming">
                 <h4 class="panel-upcoming-title">Mejoras en camino</h4>
