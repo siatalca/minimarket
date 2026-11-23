@@ -309,6 +309,21 @@ function open_w(popUpReference) {
     return;
   }
 
+  // Opciones que el servidor solo deja guardar a administradores: con la autorizacion temporal el token
+  // sigue siendo del cajero, asi que no se abren aunque se llamen por atajo o consola (M-045).
+  const configGuard = window.MinimarketConfigGuard;
+  if (configGuard) {
+    const access = configGuard.checkConfigPopupAccess(popUpReference, configGuard.readSessionRole(localStorage));
+    if (!access.allowed) {
+      if (typeof window.appNotify === 'function') {
+        window.appNotify(access.message, 'warning');
+      } else {
+        alert(access.message);
+      }
+      return;
+    }
+  }
+
   const embeddedPopups = new Set([
     'opciones-Habilitadas',
     'cajero',
@@ -339,7 +354,7 @@ function open_w(popUpReference) {
   ]);
 
   if (embeddedPopups.has(popUpReference)) {
-    openEmbeddedPopup("./popup/"+popUpReference+".php?v=20260320a");
+    openEmbeddedPopup("./popup/"+popUpReference+".php?v=20261123a");
     return;
   }
   myWindow = window.open(

@@ -22,6 +22,7 @@ const {
 } = require('./session_reservation_policy');
 const { closeShiftCore } = require('./shift_close_core');
 const { isUserActive } = require('./user_status');
+const { openShiftWindowSql } = require('./shift_window');
 const {
   applyInventoryDelta, recordInventoryMovement, parseStrictQuantity, roundQty,
   createIdempotencyCache, normalizeRequestId,
@@ -30,6 +31,9 @@ const inventoryRequestCache = createIdempotencyCache();
 const restrictedCloseReplayGuard = new RestrictedCloseReplayGuard();
 
 const app = express();
+// Rutas sensibles a mayusculas: "/API/productos" no debe llegar a "/api/productos" sin pasar
+// por el control de token (que decide por el texto de la ruta).
+app.set('case sensitive routing', true);
 // Detras de Nginx (mismo equipo): toma la IP real del cliente desde X-Forwarded-For.
 app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '1mb' }));
@@ -58,6 +62,8 @@ const {
 const ONE_HOUR_MS = 60 * 60 * 1000;
 // Intentos de login (reglas en rate_limiter.js: por IP, por cuenta + IP y por cuenta).
 const loginGuard = createLoginGuard();
+// Intentos en /api/auth/verify-admin (ruta publica): mismas reglas, contadores propios.
+const adminVerifyGuard = createLoginGuard();
 // Registro publico de equipos y cajas (pantalla previa al login).
 const addCajaIpLimiter = createRateLimiter({ max: 20, windowMs: ONE_HOUR_MS });
 const bindIpLimiter = createRateLimiter({ max: 120, windowMs: ONE_HOUR_MS });
@@ -755,7 +761,7 @@ async function getOpenShiftByCajaCajero(executor, cajaId, cajeroId) {
   const [rows] = await executor.query(
     `SELECT id_corte, hora_apertura
      FROM corte_caja
-     WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+     WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
      ORDER BY id_corte DESC
      LIMIT 1`,
     [cajaId, cajeroId]
@@ -774,7 +780,6 @@ async function getShiftFallbackNextTicket(executor, { turnoId, cajaId, cajeroId,
      FROM ventas
      WHERE turno_id = ?
         OR (turno_id IS NULL
-            AND DATE(fecha) = CURDATE()
             AND usuario_id = ?
             AND caja_id = ?
             AND fecha >= ?)`,
@@ -3969,7 +3974,8 @@ async function ensureOperationalTables() {
 }
 
 app.use(async (req, res, next) => {
-  if (!req.path.startsWith('/api/')) {
+  // En minusculas: "/API/..." tambien exige token (defensa doble junto a 'case sensitive routing').
+  if (!req.path.toLowerCase().startsWith('/api/')) {
     return next();
   }
   if (req.method === 'OPTIONS') {
@@ -7781,7 +7787,7 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       const [openRows] = await db.query(
         `SELECT id_corte, DATE_FORMAT(fecha, '%Y-%m-%d') AS fecha_iso, hora_apertura, monto_inicial, estado
          FROM corte_caja
-         WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+         WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
          ORDER BY id_corte DESC
          LIMIT 1`,
         [targetCajaId, targetCajeroId]
@@ -7802,10 +7808,11 @@ app.post('/api/print/cut-session-ticket', async (req, res) => {
       return res.status(400).json({ message: 'No se pudo determinar el corte a imprimir' });
     }
 
-    const salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
-    const salesParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
-    const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
-    const movementParams = [targetCajaId, targetCajeroId, targetDateIso, targetCutId, shiftOpenAt, shiftCloseAt];
+    // Por turno y horario de apertura/cierre, sin cortar en la medianoche (turnos que cruzan de dia).
+    const salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ? AND v.fecha <= COALESCE(?, NOW())))`;
+    const salesParams = [targetCajaId, targetCajeroId, targetCutId, shiftOpenAt, shiftCloseAt];
+    const movementWhere = `m.caja_id = ? AND m.usuario_id = ? AND (m.turno_id = ? OR (m.turno_id IS NULL AND m.fecha >= ? AND m.fecha <= COALESCE(?, NOW())))`;
+    const movementParams = [targetCajaId, targetCajeroId, targetCutId, shiftOpenAt, shiftCloseAt];
 
     const [summaryRows] = await db.query(
       `SELECT vp.metodo_pago, COUNT(DISTINCT v.id_venta) AS transacciones, COALESCE(SUM(vp.monto), 0) AS total
@@ -9333,7 +9340,7 @@ app.get('/api/corte/historial', async (req, res) => {
        LEFT JOIN ventas v
          ON v.caja_id = c.caja_id
         AND v.usuario_id = c.usuario_id
-        AND DATE(v.fecha) = c.fecha
+        -- Mismo criterio que la impresion del corte: por turno u horario, sin cortar en la medianoche.
         AND (
           v.turno_id = c.id_corte
           OR (
@@ -10105,7 +10112,7 @@ app.get('/api/turno/estado', async (req, res) => {
     const [openRows] = await db.query(
       `SELECT id_corte, estado, monto_inicial, hora_apertura, hora_cierre
        FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -10124,7 +10131,7 @@ app.get('/api/turno/estado', async (req, res) => {
     const [lastRows] = await db.query(
       `SELECT id_corte, estado, monto_inicial, hora_apertura, hora_cierre
        FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ?
+       WHERE (fecha = CURDATE() OR DATE(hora_cierre) = CURDATE()) AND caja_id = ? AND usuario_id = ?
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -10184,7 +10191,7 @@ app.get('/api/sales/session-history', async (req, res) => {
       [openRows] = await db.query(
         `SELECT id_corte, hora_apertura
          FROM corte_caja
-         WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+         WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
          ORDER BY id_corte DESC
          LIMIT 1`,
         [cajaId, effectiveCajeroId]
@@ -10234,10 +10241,10 @@ app.get('/api/sales/session-history', async (req, res) => {
              COALESCE(v.pago_modificado, 0) AS pago_modificado
       FROM ventas v
       LEFT JOIN usuarios u ON u.id = v.usuario_id
-      WHERE DATE(v.fecha) = CURDATE()
-        AND v.caja_id = ?
+      WHERE v.caja_id = ?
         AND v.usuario_id = ?
     `;
+    // Ventas del turno abierto (desde su apertura, aunque haya pasado la medianoche).
     const params = [cajaId, effectiveCajeroId];
 
     if (hasTurnoId) {
@@ -10293,7 +10300,7 @@ app.get('/api/sales/:saleId/detail', async (req, res) => {
       const [openRows] = await db.query(
         `SELECT id_corte, hora_apertura
          FROM corte_caja
-         WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+         WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
          ORDER BY id_corte DESC
          LIMIT 1`,
         [cajaId, cajeroId]
@@ -10304,12 +10311,14 @@ app.get('/api/sales/:saleId/detail', async (req, res) => {
         WHERE v.id_venta = ?
           AND v.caja_id = ?
           AND v.usuario_id = ?
-          AND DATE(v.fecha) = CURDATE()
       `;
       const accessParams = [saleId, cajaId, cajeroId];
       if (openRows.length) {
+        // Ventas del turno abierto, aunque haya pasado la medianoche.
         accessSql += ' AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ?))';
         accessParams.push(Number(openRows[0].id_corte || 0), openRows[0].hora_apertura);
+      } else {
+        accessSql += ' AND DATE(v.fecha) = CURDATE()';
       }
       accessSql += ' LIMIT 1';
       const [allowedRows] = await db.query(accessSql, accessParams);
@@ -10454,7 +10463,7 @@ app.put('/api/sales/:saleId/payment', async (req, res) => {
       const [openRows] = await connection.query(
         `SELECT id_corte, hora_apertura
          FROM corte_caja
-         WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+         WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
          ORDER BY id_corte DESC
          LIMIT 1`,
         [cajaId, cajeroId]
@@ -10465,12 +10474,14 @@ app.put('/api/sales/:saleId/payment', async (req, res) => {
         WHERE v.id_venta = ?
           AND v.caja_id = ?
           AND v.usuario_id = ?
-          AND DATE(v.fecha) = CURDATE()
       `;
       const accessParams = [saleId, cajaId, cajeroId];
       if (openRows.length) {
+        // Ventas del turno abierto, aunque haya pasado la medianoche.
         accessSql += ' AND (v.turno_id = ? OR (v.turno_id IS NULL AND v.fecha >= ?))';
         accessParams.push(Number(openRows[0].id_corte || 0), openRows[0].hora_apertura);
+      } else {
+        accessSql += ' AND DATE(v.fecha) = CURDATE()';
       }
       accessSql += ' LIMIT 1';
       const [allowedRows] = await connection.query(accessSql, accessParams);
@@ -10585,7 +10596,7 @@ app.get('/api/turno/abierto-caja', async (req, res) => {
       `SELECT c.id_corte, c.caja_id, c.usuario_id, c.hora_apertura, u.nombre AS cajero_nombre
        FROM corte_caja c
        LEFT JOIN usuarios u ON u.id = c.usuario_id
-       WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.estado = 'abierto'
+       WHERE c.caja_id = ? AND c.estado = 'abierto' AND ${openShiftWindowSql('c')}
        ORDER BY c.id_corte DESC
        LIMIT 1`,
       [cajaId]
@@ -10622,24 +10633,31 @@ app.post('/api/turno/iniciar', async (req, res) => {
     return res.status(403).json({ message: 'No autorizado para iniciar turno para otro cajero' });
   }
 
+  let connection;
   try {
     const sucursalId = await resolveBranchForCaja(cajaId);
-    const [openRows] = await db.query(
+    // Transaccion con la fila de la caja bloqueada: dos pedidos simultaneos para la misma caja
+    // esperan uno al otro, y el segundo ve el turno que abrio el primero.
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    await connection.query('SELECT id_caja FROM cajas WHERE n_caja = ? LIMIT 1 FOR UPDATE', [cajaId]);
+    const [openRows] = await connection.query(
       `SELECT id_corte, estado, monto_inicial
        FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
     );
 
     if (openRows.length > 0) {
-      await db.query(
+      await connection.query(
         `UPDATE user_auth_sessions
          SET turno_id = ?, sucursal_id = ?
          WHERE user_id = ? AND caja_id = ? AND revoked_at IS NULL AND expires_at > NOW()`,
         [openRows[0].id_corte, sucursalId, cajeroId, cajaId]
       );
+      await connection.commit();
       return res.json({
         message: 'Turno ya iniciado',
         estado: 'abierto',
@@ -10648,7 +10666,7 @@ app.post('/api/turno/iniciar', async (req, res) => {
       });
     }
 
-    const [result] = await db.query(
+    const [result] = await connection.query(
       `INSERT INTO corte_caja (
         fecha, caja_id, sucursal_id, usuario_id, hora_apertura, monto_inicial, estado
       ) VALUES (
@@ -10657,12 +10675,13 @@ app.post('/api/turno/iniciar', async (req, res) => {
       [cajaId, sucursalId, cajeroId, montoInicial]
     );
 
-    await db.query(
+    await connection.query(
       `UPDATE user_auth_sessions
        SET turno_id = ?, sucursal_id = ?
        WHERE user_id = ? AND caja_id = ? AND revoked_at IS NULL AND expires_at > NOW()`,
       [result.insertId, sucursalId, cajeroId, cajaId]
     );
+    await connection.commit();
 
     return res.json({
       message: 'Turno iniciado',
@@ -10671,8 +10690,13 @@ app.post('/api/turno/iniciar', async (req, res) => {
       monto_inicial: montoInicial,
     });
   } catch (error) {
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
     console.error('Error al iniciar turno:', error);
     return res.status(500).json({ message: 'Error interno del servidor' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -10689,7 +10713,7 @@ app.get('/api/turno/resumen', async (req, res) => {
     const [openRows] = await db.query(
       `SELECT id_corte, hora_apertura, monto_inicial
        FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -10703,11 +10727,15 @@ app.get('/api/turno/resumen', async (req, res) => {
     const sessionStart = openShift.hora_apertura;
     const openShiftId = Number(openShift.id_corte || 0);
 
-    let salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = CURDATE()`;
+    // scope 'session': el turno abierto desde su apertura (mismo criterio que shift_close_core.js,
+    // aunque haya pasado la medianoche). scope 'day': las ventas de hoy de esa caja y cajero.
+    let salesWhere = `v.caja_id = ? AND v.usuario_id = ?`;
     const salesParams = [cajaId, cajeroId];
     if (scope === 'session') {
       salesWhere += ' AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)';
       salesParams.push(sessionStart, openShiftId);
+    } else {
+      salesWhere += ' AND DATE(v.fecha) = CURDATE()';
     }
 
     const [summaryRows] = await db.query(
@@ -10823,8 +10851,7 @@ app.get('/api/turno/resumen', async (req, res) => {
               ON v.id_venta = d.venta_id
              AND v.caja_id = ?
              AND v.usuario_id = ?
-             AND DATE(v.fecha) = CURDATE()
-             ${scope === 'session' ? 'AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)' : ''}
+             ${scope === 'session' ? 'AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)' : 'AND DATE(v.fecha) = CURDATE()'}
        GROUP BY dep.id_departamento, dep.nombre
        ORDER BY dep.nombre ASC`,
       departmentParams
@@ -10853,7 +10880,7 @@ app.get('/api/turno/resumen', async (req, res) => {
       const [byTurnSummaryRows] = await db.query(
         `SELECT m.tipo, m.metodo, COUNT(*) AS transacciones, COALESCE(SUM(m.monto), 0) AS total
          FROM cash_movements m
-         WHERE m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = CURDATE()
+         WHERE m.caja_id = ? AND m.usuario_id = ?
            AND m.turno_id = ?
            AND m.fecha >= ?
          GROUP BY m.tipo, m.metodo`,
@@ -10863,7 +10890,7 @@ app.get('/api/turno/resumen', async (req, res) => {
         `SELECT DATE_FORMAT(m.fecha, '%Y-%m-%d %H:%i:%s') AS fecha,
                 m.tipo, m.metodo, m.monto, COALESCE(m.descripcion, '') AS descripcion
          FROM cash_movements m
-         WHERE m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = CURDATE()
+         WHERE m.caja_id = ? AND m.usuario_id = ?
            AND m.turno_id = ?
            AND m.fecha >= ?
          ORDER BY m.fecha ASC, m.id_movimiento ASC
@@ -10879,7 +10906,7 @@ app.get('/api/turno/resumen', async (req, res) => {
         const [legacySummaryRows] = await db.query(
           `SELECT m.tipo, m.metodo, COUNT(*) AS transacciones, COALESCE(SUM(m.monto), 0) AS total
            FROM cash_movements m
-           WHERE m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = CURDATE()
+           WHERE m.caja_id = ? AND m.usuario_id = ?
              AND m.turno_id IS NULL
              AND m.fecha >= ?
            GROUP BY m.tipo, m.metodo`,
@@ -10889,7 +10916,7 @@ app.get('/api/turno/resumen', async (req, res) => {
           `SELECT DATE_FORMAT(m.fecha, '%Y-%m-%d %H:%i:%s') AS fecha,
                   m.tipo, m.metodo, m.monto, COALESCE(m.descripcion, '') AS descripcion
            FROM cash_movements m
-           WHERE m.caja_id = ? AND m.usuario_id = ? AND DATE(m.fecha) = CURDATE()
+           WHERE m.caja_id = ? AND m.usuario_id = ?
              AND m.turno_id IS NULL
              AND m.fecha >= ?
            ORDER BY m.fecha ASC, m.id_movimiento ASC
@@ -11007,7 +11034,7 @@ app.get('/api/turno/departamentos', async (req, res) => {
     const [openRows] = await db.query(
       `SELECT id_corte, hora_apertura
        FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -11019,11 +11046,15 @@ app.get('/api/turno/departamentos', async (req, res) => {
 
     const sessionStart = openRows[0].hora_apertura;
     const openShiftId = Number(openRows[0].id_corte || 0);
-    let salesWhere = `v.caja_id = ? AND v.usuario_id = ? AND DATE(v.fecha) = CURDATE()`;
+    // scope 'session': el turno abierto desde su apertura (mismo criterio que shift_close_core.js,
+    // aunque haya pasado la medianoche). scope 'day': las ventas de hoy de esa caja y cajero.
+    let salesWhere = `v.caja_id = ? AND v.usuario_id = ?`;
     const salesParams = [cajaId, cajeroId];
     if (scope === 'session') {
       salesWhere += ' AND v.fecha >= ? AND (v.turno_id = ? OR v.turno_id IS NULL)';
       salesParams.push(sessionStart, openShiftId);
+    } else {
+      salesWhere += ' AND DATE(v.fecha) = CURDATE()';
     }
 
     const [departmentRows] = await db.query(
@@ -11150,7 +11181,7 @@ app.post('/api/cash-movements', async (req, res) => {
     const [openRows] = await db.query(
       `SELECT id_corte
        FROM corte_caja
-       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -11243,8 +11274,8 @@ app.get('/api/reportes/charts', async (req, res) => {
               COALESCE(SUM(${cardExpr}), 0) AS tarjeta
        FROM ventas v
        WHERE ${parsed.whereClause}
-       GROUP BY DATE(v.fecha)
-       ORDER BY DATE(v.fecha) ASC`,
+       GROUP BY DATE_FORMAT(v.fecha, '%Y-%m-%d')
+       ORDER BY DATE_FORMAT(v.fecha, '%Y-%m-%d') ASC`,
       parsed.values
     );
 
@@ -11267,8 +11298,8 @@ app.get('/api/reportes/charts', async (req, res) => {
               COALESCE(SUM(${cardExpr}), 0) AS tarjeta
        FROM ventas v
        WHERE ${parsed.whereClause}
-       GROUP BY YEAR(v.fecha), MONTH(v.fecha)
-       ORDER BY YEAR(v.fecha) ASC, MONTH(v.fecha) ASC`,
+       GROUP BY DATE_FORMAT(v.fecha, '%Y-%m')
+       ORDER BY DATE_FORMAT(v.fecha, '%Y-%m') ASC`,
       parsed.values
     );
 
@@ -12248,7 +12279,7 @@ app.post('/api/corte/cerrar', async (req, res) => {
   try {
     const [existing] = await db.query(
       `SELECT id_corte, estado, monto_inicial, hora_apertura FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -12432,6 +12463,7 @@ app.post('/api/auth/refresh', async (req, res) => {
 
     if (authSession.turno_id) {
       const [openShiftRows] = await db.query(
+        // Turno exacto de esta sesion: sin ventana, para no expulsar a quien tiene un turno largo.
         `SELECT id_corte
          FROM corte_caja
          WHERE id_corte = ? AND usuario_id = ? AND estado = 'abierto'
@@ -12528,13 +12560,20 @@ app.post('/api/auth/verify-admin', async (req, res) => {
     }
   }
 
+  // Igual que /api/login: el intento se cuenta antes de cualquier await.
+  const verifyIp = clientIpKey(req);
+  const ipAttempt = adminVerifyGuard.beginAttempt(verifyIp);
+  if (!ipAttempt.ok) {
+    return rejectRateLimited(res, ipAttempt.retryMs, loginBlockedMessage(ipAttempt.retryMs));
+  }
+
   try {
     let rows = [];
     let usedPermissionFallback = false;
 
     try {
       const [permissionRows] = await db.query(
-        `SELECT u.id, u.user, u.nombre, u.contrasena, u.es_administrador${permissionSelect}
+        `SELECT u.id, u.user, u.nombre, u.contrasena, u.es_administrador, u.activo${permissionSelect}
          FROM usuarios u
          LEFT JOIN cajero_permisos p ON p.usuario_id = u.id
          WHERE LOWER(u.user) = LOWER(?) OR LOWER(u.nombre) = LOWER(?)
@@ -12548,7 +12587,7 @@ app.post('/api/auth/verify-admin', async (req, res) => {
       usedPermissionFallback = true;
       console.error('Fallback en verify-admin (consulta permisos):', permissionQueryError?.message || permissionQueryError);
       const [basicRows] = await db.query(
-        `SELECT u.id, u.user, u.nombre, u.contrasena, u.es_administrador
+        `SELECT u.id, u.user, u.nombre, u.contrasena, u.es_administrador, u.activo
          FROM usuarios u
          WHERE LOWER(u.user) = LOWER(?) OR LOWER(u.nombre) = LOWER(?)
          ORDER BY u.id ASC
@@ -12559,10 +12598,18 @@ app.post('/api/auth/verify-admin', async (req, res) => {
     }
 
     if (!rows.length) {
+      const unknownAttempt = adminVerifyGuard.checkUnknownAccount(usernameInput, verifyIp);
+      if (!unknownAttempt.ok) {
+        return rejectRateLimited(res, unknownAttempt.retryMs, loginBlockedMessage(unknownAttempt.retryMs));
+      }
       return res.status(401).json({ message: 'Credenciales de administrador inválidas.' });
     }
 
     const user = rows[0];
+    const accountAttempt = adminVerifyGuard.checkAccount(user.id, verifyIp);
+    if (!accountAttempt.ok) {
+      return rejectRateLimited(res, accountAttempt.retryMs, loginBlockedMessage(accountAttempt.retryMs));
+    }
     const storedPassword = String(user.contrasena || '');
     let passwordOk = false;
     let shouldUpgradeHash = false;
@@ -12574,9 +12621,11 @@ app.post('/api/auth/verify-admin', async (req, res) => {
       shouldUpgradeHash = passwordOk;
     }
 
-    if (!passwordOk) {
+    // Un usuario desactivado recibe la misma respuesta que una clave incorrecta (no revela su estado).
+    if (!passwordOk || !isUserActive(user)) {
       return res.status(401).json({ message: 'Credenciales de administrador inválidas.' });
     }
+    adminVerifyGuard.success(user.id, verifyIp);
 
     const isAdmin = Number(user.es_administrador || 0) === 1;
     const hasSectionPermission = usedPermissionFallback
@@ -12786,7 +12835,7 @@ app.post('/api/login', async (req, res) => {
         `SELECT c.id_corte, c.usuario_id, u.nombre AS cajero_nombre, u.user AS cajero_user
          FROM corte_caja c
          LEFT JOIN usuarios u ON u.id = c.usuario_id
-         WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.estado = 'abierto'
+         WHERE c.caja_id = ? AND c.estado = 'abierto' AND ${openShiftWindowSql('c')}
          ORDER BY c.id_corte DESC
          LIMIT 1`,
         [cajaId]
@@ -12861,10 +12910,10 @@ app.post('/api/login', async (req, res) => {
       const [ownOpenShiftRows] = await db.query(
         `SELECT id_corte
          FROM corte_caja
-         WHERE fecha = CURDATE()
-           AND caja_id = ?
+         WHERE caja_id = ?
            AND usuario_id = ?
            AND estado = 'abierto'
+           AND ${openShiftWindowSql()}
          ORDER BY id_corte DESC
          LIMIT 1`,
         [cajaId, user.id]
@@ -13093,6 +13142,8 @@ app.post('/api/getconnect', async (req, res) => {
   if (!cajaId || !userId) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
   }
+  // Ninguna pantalla lo usa; queda solo para administradores.
+  if (!(await requireAdministrator(req, res))) return;
 
   try {
     const [conexion] = await db.query(
@@ -13204,7 +13255,7 @@ app.post('/api/sales', async (req, res) => {
     const [turnRows] = await db.query(
       `SELECT id_corte, estado, hora_apertura
        FROM corte_caja
-       WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+       WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        ORDER BY id_corte DESC
        LIMIT 1`,
       [cajaId, cajeroId]
@@ -13863,7 +13914,7 @@ app.delete('/api/cajas/:numero', async (req, res) => {
     const [openTurnRows] = await connection.query(
       `SELECT id_corte
        FROM corte_caja
-       WHERE caja_id = ? AND fecha = CURDATE() AND estado = 'abierto'
+       WHERE caja_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
        LIMIT 1`,
       [cajaId]
     );
@@ -14107,11 +14158,16 @@ app.put('/api/updateUser/', async (req, res) => {
   if (!userId || typeof estado_usuario === 'undefined') {
     return res.status(400).json({ error: 'Datos incompletos o invalidos' });
   }
+  // Salir (js/logout.js) cambia el propio estado; el de otro usuario solo un administrador.
+  if (toInt(req.user?.sub) !== userId && !(await requireAdministrator(req, res))) {
+    return;
+  }
+  const estadoUsuario = Number(estado_usuario) === 1 ? 1 : 0;
 
   try {
     await db.query(
       'UPDATE usuarios SET estado_usuario = ? WHERE id = ?',
-      [estado_usuario, userId]
+      [estadoUsuario, userId]
     );
     res.json({ message: 'estado del usuario actualizado' });
   } catch (err) {

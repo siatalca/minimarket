@@ -522,15 +522,28 @@ async function saveSaleReceiptPolicy(allow) {
         body: JSON.stringify({ allow_sale_without_receipt: allow ? 1 : 0 }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.message || 'No se pudo guardar la politica de comprobantes');
+    if (!response.ok) {
+        const fallback = 'No se pudo guardar la politica de comprobantes';
+        const guard = window.MinimarketConfigGuard;
+        throw new Error(guard ? guard.describeSaveError(response.status, data.message, fallback) : (data.message || fallback));
+    }
     return data;
+}
+
+// PUT /api/sale-receipt-policy exige requireAdministrator: sin sesion de administrador la opcion no se muestra.
+function canEditSaleReceiptPolicy() {
+    const guard = window.MinimarketConfigGuard;
+    return guard ? guard.readSessionRole(localStorage).isAdmin : true;
 }
 
 async function initTicketForm() {
     const form = document.getElementById('ticket-settings-form');
     if (!form) return;
     // Politica global (todas las cajas), separada de la configuracion del ticket por caja.
-    const allowNoReceiptInput = document.getElementById('ticket-allow-no-receipt');
+    const canEditReceiptPolicy = canEditSaleReceiptPolicy();
+    const receiptPolicyBlock = document.getElementById('ticket-allow-no-receipt-block');
+    if (receiptPolicyBlock) receiptPolicyBlock.classList.toggle('hidden', !canEditReceiptPolicy);
+    const allowNoReceiptInput = canEditReceiptPolicy ? document.getElementById('ticket-allow-no-receipt') : null;
     let initialAllowNoReceipt = null;
     if (allowNoReceiptInput) {
         fetchSaleReceiptPolicy()

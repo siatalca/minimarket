@@ -3,6 +3,7 @@
 // Las fechas de vencimiento se calculan con NOW() de la base, igual que las comparaciones.
 
 const { availableForCart, cartItemStockProblem, resolveCartLineQuantity } = require('./tienda_core');
+const { openShiftWindowSql } = require('./shift_window');
 
 // Columnas del producto que puede ver el cliente (ver toPublicProduct en tienda_core.js).
 // id_producto se lee solo para uso interno (guardar la linea del carrito); nunca se responde.
@@ -464,12 +465,12 @@ function createTiendaRepo(db) {
 
   // ---- Caja y venta del carrito (M-039) ----
 
-  // La caja existe y el usuario tiene ahi su turno abierto de hoy (misma regla que POST /api/sales).
+  // La caja existe y el usuario tiene ahi su turno abierto (misma ventana que POST /api/sales, M-045).
   async function cajaHasOpenShift(numeroCaja, userId) {
     const [rows] = await db.query(
       `SELECT c.id_corte
        FROM corte_caja c
-       WHERE c.fecha = CURDATE() AND c.caja_id = ? AND c.usuario_id = ? AND c.estado = 'abierto'
+       WHERE c.caja_id = ? AND c.usuario_id = ? AND c.estado = 'abierto' AND ${openShiftWindowSql('c')}
          AND EXISTS (SELECT 1 FROM cajas cj WHERE cj.n_caja = c.caja_id)
        LIMIT 1`,
       [numeroCaja, userId]

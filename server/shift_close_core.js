@@ -1,3 +1,5 @@
+const { openShiftWindowSql } = require('./shift_window');
+
 function amount(value) { const n = Number(value || 0); return Number.isFinite(n) ? n : 0; }
 function norm(value) { return String(value || '').trim().toLowerCase(); }
 function sum(rows, type, method) {
@@ -21,9 +23,11 @@ function formatReceipt(result) {
 async function closeShiftCore({ database, cajaId, cajeroId, expectedShiftId = 0,
   montoDeclaradoInput = 0, montoDeclaradoTarjetaInput = 0, observaciones = null,
   auditNote = '', sql, lock = false }) {
+  // Turno abierto dentro de la ventana de shift_window.js: uno abierto antes de medianoche se cierra
+  // igual. Las ventas y movimientos cuentan desde su hora_apertura (y por turno_id), no por el dia.
   const [existing] = await database.query(
     `SELECT id_corte, estado, monto_inicial, hora_apertura FROM corte_caja
-     WHERE fecha = CURDATE() AND caja_id = ? AND usuario_id = ? AND estado = 'abierto'
+     WHERE caja_id = ? AND usuario_id = ? AND estado = 'abierto' AND ${openShiftWindowSql()}
      ORDER BY id_corte DESC LIMIT 1${lock ? ' FOR UPDATE' : ''}`,
     [cajaId, cajeroId]
   );

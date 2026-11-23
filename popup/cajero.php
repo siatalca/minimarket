@@ -5,6 +5,8 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cajeros</title>
+    <script src="../js/config_admin_guard.js?v=20261123a"></script>
+    <script>MinimarketConfigGuard.guardPopupPage('cajero');</script>
     <link rel="stylesheet" href="../css/root.css">
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <style>

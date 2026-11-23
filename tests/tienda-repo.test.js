@@ -64,7 +64,8 @@ test('canje guarda la caja; vinculo con la venta exige retirado, mismo usuario y
   const cajaDb = fakeDb(() => [[{ id_corte: 4 }]]);
   assert.equal(await createTiendaRepo(cajaDb).cajaHasOpenShift(3, 5), true);
   const shift = cajaDb.queries[0];
-  assert.match(shift.sql, /FROM corte_caja c WHERE c\.fecha = CURDATE\(\) AND c\.caja_id = \? AND c\.usuario_id = \? AND c\.estado = 'abierto'/);
+  // M-045: misma ventana de turno abierto que las ventas (cruza la medianoche, no revive turnos viejos).
+  assert.match(shift.sql, /FROM corte_caja c WHERE c\.caja_id = \? AND c\.usuario_id = \? AND c\.estado = 'abierto' AND \(c\.fecha = CURDATE\(\) OR c\.hora_apertura >= NOW\(\) - INTERVAL 16 HOUR\)/);
   assert.match(shift.sql, /EXISTS \(SELECT 1 FROM cajas cj WHERE cj\.n_caja = c\.caja_id\)/);
   assert.deepEqual(shift.params, [3, 5]);
   assert.equal(await createTiendaRepo(fakeDb(() => [[]])).cajaHasOpenShift(3, 5), false);

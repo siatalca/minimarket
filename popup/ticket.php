@@ -135,8 +135,11 @@
                         <label><input id="ticket-show-box" type="checkbox" checked> Mostrar caja</label><br>
                         <label><input id="ticket-show-payment" type="checkbox" checked> Mostrar metodo de pago</label><br>
                         <label><input id="ticket-include-details" type="checkbox" checked> Incluir detalle de productos por defecto</label><br>
-                        <label><input id="ticket-allow-no-receipt" type="checkbox" checked> Habilitar boton "F2 Finalizar sin comprobante"</label><br>
-                        <p style="margin:2px 0 0 24px; font-size:0.86rem; color:#475569;">Si se desactiva, todas las ventas imprimen comprobante. Aplica a todas las cajas.</p>
+                        <!-- Politica global: el servidor solo deja guardarla a administradores (M-045); se oculta a los demas. -->
+                        <div id="ticket-allow-no-receipt-block">
+                            <label><input id="ticket-allow-no-receipt" type="checkbox" checked> Habilitar boton "F2 Finalizar sin comprobante"</label><br>
+                            <p style="margin:2px 0 0 24px; font-size:0.86rem; color:#475569;">Si se desactiva, todas las ventas imprimen comprobante. Aplica a todas las cajas.</p>
+                        </div>
 
                         <br>
                         <div style="display:flex; gap:10px; align-items:center; margin-top: 10px; flex-wrap:wrap;">
@@ -154,7 +157,8 @@
     <script src="../js/api_base.js?v=20261003a"></script>
     <script src="../js/ticket_print_method.js?v=20261003b"></script>
     <script src="../js/html_escape.js?v=20261112a"></script>
-    <script src="../js/ticket_settings.js?v=20261112a"></script>
+    <script src="../js/config_admin_guard.js?v=20261123a"></script>
+    <script src="../js/ticket_settings.js?v=20261123a"></script>
 </body>
 </html>
 

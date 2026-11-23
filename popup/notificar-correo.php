@@ -5,9 +5,11 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notificar por correo</title>
+    <script src="../js/config_admin_guard.js?v=20261123a"></script>
+    <script>MinimarketConfigGuard.guardPopupPage('notificar-correo');</script>
     <link rel="stylesheet" href="../css/popUpStyle.css">
     <script src="../js/html_escape.js?v=20261112a"></script>
-    <script src="../js/functions.js?v=20261112b"></script>
+    <script src="../js/functions.js?v=20261123a"></script>
     <style>
         .mail-shell { max-width: 980px; margin: 0 auto; }
         .mail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }

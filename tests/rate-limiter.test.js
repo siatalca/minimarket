@@ -187,3 +187,45 @@ test('login: los nombres inexistentes no desplazan los contadores de cuentas rea
   for (let i = 0; i < 20000; i += 1) guard.checkUnknownAccount(`inventado${i}`, `10.0.${i % 250}.${i % 200}`);
   assert.equal(guard.checkAccount(7, '8.8.8.8').ok, false, 'la cuenta real sigue bloqueada');
 });
+
+test('login: un ataque repartido en muchas IP no deja fuera al dueno desde su IP de confianza', () => {
+  const c = clock();
+  const guard = createLoginGuard({ now: c.now });
+  // El dueno ya entro antes desde su local.
+  guard.beginAttempt('181.2.3.4');
+  guard.checkAccount(1, '181.2.3.4');
+  guard.success(1, '181.2.3.4');
+  // 100 IP del atacante, 8 intentos cada una: el contador solo por cuenta se agota.
+  for (let i = 0; i < 100; i += 1) {
+    for (let j = 0; j < 8; j += 1) guard.checkAccount(1, `66.0.${i}.1`);
+  }
+  assert.equal(guard.checkAccount(1, '66.0.200.1').ok, false, 'una IP nueva queda bloqueada por cuenta');
+  assert.equal(guard.checkAccount(1, '181.2.3.4').ok, true, 'el dueno sigue entrando desde su IP');
+  for (let j = 0; j < 7; j += 1) guard.checkAccount(1, '181.2.3.4');
+  assert.equal(guard.checkAccount(1, '181.2.3.4').ok, false, 'la IP de confianza sigue limitada a 8 por cuenta + IP');
+});
+
+test('login: la IP de confianza vence', () => {
+  const c = clock();
+  const guard = createLoginGuard({ now: c.now, trustMs: 60000, perAccountMax: 2 });
+  guard.checkAccount(1, '181.2.3.4');
+  guard.success(1, '181.2.3.4');
+  c.advance(60000);
+  guard.checkAccount(1, '66.0.0.1');
+  guard.checkAccount(1, '66.0.0.2');
+  assert.equal(guard.checkAccount(1, '181.2.3.4').ok, false, 'vencida la confianza aplica el limite por cuenta');
+});
+
+test('login: con muchas IP un usuario inexistente recibe el 429 en el mismo intento que uno real', () => {
+  const c = clock();
+  const guard = createLoginGuard({ now: c.now });
+  const intentosHasta429 = (check) => {
+    for (let i = 1; i <= 200; i += 1) if (!check(`77.1.${Math.floor(i / 4)}.${i % 4}`).ok) return i;
+    return null;
+  };
+  // Cada IP hace 1 intento: solo aplica el contador por nombre/cuenta.
+  const real = intentosHasta429((ip) => guard.checkAccount(9, ip));
+  const inexistente = intentosHasta429((ip) => guard.checkUnknownAccount('Fantasma', ip));
+  assert.equal(real, 51);
+  assert.equal(inexistente, real, 'el 429 repartido no revela si el usuario existe');
+});

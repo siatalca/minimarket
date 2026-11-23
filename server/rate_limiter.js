@@ -102,23 +102,50 @@ function allowRegistrationRequest(req, res, ipLimiter, globalLimiter) {
 // - Por IP (si se conoce): todo intento cuenta; un login correcto lo descuenta.
 // - Por cuenta (id del usuario, no el texto escrito): el limite estricto es cuenta + IP, para que
 //   un tercero no pueda bloquear la cuenta de otro desde su propia IP. Un umbral alto solo por
-//   cuenta frena la fuerza bruta repartida en muchas IP. Sin IP conocida queda solo por cuenta.
+//   cuenta (perAccountMax, 50 en 15 min) frena la fuerza bruta repartida en muchas IP. Sin IP
+//   conocida queda solo por cuenta.
+// - El umbral solo por cuenta NO se aplica a una IP desde la que esa cuenta ya entro bien
+//   (IP de confianza, recordada trustMs): asi un ataque repartido en muchas IP no puede dejar
+//   fuera al dueno desde su local. Esa IP sigue limitada por cuenta + IP y por IP.
+// - Un nombre inexistente tiene los mismos dos contadores (nombre + IP y nombre solo), para que el
+//   429 aparezca igual que en una cuenta real y no revele que nombres existen.
 function createLoginGuard({
   windowMs = 15 * 60 * 1000,
   perIpMax = 30,
   perAccountIpMax = 8,
   perAccountMax = 50,
   perAccountNoIpMax = 8,
-  now,
+  trustMs = 30 * 24 * 60 * 60 * 1000,
+  maxTrusted = 10000,
+  now = () => Date.now(),
 } = {}) {
   const byIp = createRateLimiter({ max: perIpMax, windowMs, now });
   const byAccountIp = createRateLimiter({ max: perAccountIpMax, windowMs, now });
   const byAccount = createRateLimiter({ max: perAccountMax, windowMs, now });
   const byAccountNoIp = createRateLimiter({ max: perAccountNoIpMax, windowMs, now });
   const byUnknown = createRateLimiter({ max: perAccountIpMax, windowMs, now });
+  const byUnknownName = createRateLimiter({ max: perAccountMax, windowMs, now });
+  // "cuenta|ip" -> momento del ultimo ingreso correcto desde esa IP.
+  const trusted = new Map();
 
   function blocked(limiter, key) {
     return { ok: false, retryMs: Math.max(1, limiter.retryAfterMs(key)) };
+  }
+
+  function isTrusted(key) {
+    const at = trusted.get(key);
+    if (at === undefined) return false;
+    if (now() - at >= trustMs) {
+      trusted.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  function trust(key) {
+    trusted.delete(key);
+    while (trusted.size >= maxTrusted) trusted.delete(trusted.keys().next().value);
+    trusted.set(key, now());
   }
 
   return {
@@ -133,7 +160,7 @@ function createLoginGuard({
       if (ip) {
         const accountIp = `${account}|${ip}`;
         if (!byAccountIp.hit(accountIp)) return blocked(byAccountIp, accountIp);
-        if (!byAccount.hit(account)) return blocked(byAccount, account);
+        if (!isTrusted(accountIp) && !byAccount.hit(account)) return blocked(byAccount, account);
       } else if (!byAccountNoIp.hit(account)) {
         return blocked(byAccountNoIp, account);
       }
@@ -146,14 +173,18 @@ function createLoginGuard({
       const name = String(username || '').trim().toLowerCase();
       const key = ip ? `${name}|${ip}` : name;
       if (!byUnknown.hit(key)) return blocked(byUnknown, key);
+      // Igual que byAccount en una cuenta real: el ataque repartido en muchas IP llega al 429.
+      if (ip && !byUnknownName.hit(name)) return blocked(byUnknownName, name);
       return { ok: true, retryMs: 0 };
     },
-    // Login correcto: limpia los contadores de la cuenta y descuenta el intento de la IP.
+    // Login correcto: limpia los contadores de la cuenta, descuenta el intento de la IP y deja
+    // esa IP como de confianza para la cuenta.
     success(userId, ip) {
       const account = String(userId);
       if (ip) {
         byAccountIp.reset(`${account}|${ip}`);
         byIp.release(ip);
+        trust(`${account}|${ip}`);
       }
       byAccount.release(account);
       byAccountNoIp.reset(account);
