@@ -412,6 +412,11 @@ function bindRestrictedReservationActions() {
 document.addEventListener('DOMContentLoaded', async () => {
   applyLoginBranding();
   bindRestrictedReservationActions();
+  // Si el equipo era una caja antes de un Acceso SIA, recupera su número antes de decidir qué pantalla mostrar.
+  // Con un Acceso SIA todavia vigente no se devuelve la caja: la sesion SIA no debe quedar con caja.
+  if (!window.MinimarketAccesoSia?.isAccesoSiaSession?.(localStorage)) {
+    window.MinimarketAccesoSia?.restorePreviousCaja(localStorage);
+  }
   const username = localStorage.getItem('user');
   const estadoLogin = localStorage.getItem('estado_login');
   const hadLocalBusiness = hasLocalBusinessInfo();
@@ -776,5 +781,84 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     }
     await login();
 
+});
+
+// -------------Acceso SIA: ingreso de soporte sin caja (no elige caja, no reserva ni registra el equipo)
+let accesoSiaReturnView = null;
+
+function openAccesoSiaView() {
+  const panel = document.getElementById('acceso-sia');
+  if (!panel) return;
+  accesoSiaReturnView = ['login', 'add-caja', 'welcome-msj'].find((id) => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  }) || null;
+  ['login', 'add-caja', 'welcome-msj'].forEach((id) => document.getElementById(id)?.classList.add('hidden'));
+  document.getElementById('acceso-sia-error')?.classList.add('hidden');
+  panel.classList.remove('hidden');
+  document.getElementById('acceso-sia-username')?.focus();
+}
+
+function closeAccesoSiaView() {
+  const password = document.getElementById('acceso-sia-password');
+  if (password) password.value = '';
+  document.getElementById('acceso-sia')?.classList.add('hidden');
+  document.getElementById(accesoSiaReturnView || 'login')?.classList.remove('hidden');
+}
+
+async function submitAccesoSiaLogin() {
+  const api = window.MinimarketAccesoSia;
+  const usernameInput = document.getElementById('acceso-sia-username');
+  const passwordInput = document.getElementById('acceso-sia-password');
+  const submit = document.getElementById('acceso-sia-submit');
+  const error = document.getElementById('acceso-sia-error');
+  const showError = (message) => {
+    if (!error) return;
+    error.textContent = message;
+    error.classList.remove('hidden');
+  };
+  if (error) error.classList.add('hidden');
+  if (submit) submit.disabled = true;
+  try {
+    const result = await api.requestLogin({
+      fetchImpl: window.fetch.bind(window),
+      apiUrl: API_URL,
+      username: usernameInput?.value,
+      password: passwordInput?.value,
+    });
+    if (!result.ok) {
+      showError(result.message);
+      return;
+    }
+    const data = result.data;
+    const username = String(usernameInput.value || '').trim();
+    // Limpia la sesión anterior (no la reserva de la caja ni su turno) y marca la sesión como Acceso SIA.
+    window.MinimarketSessionReservation?.clearLocalAuth(localStorage, sessionStorage);
+    api.markSession(localStorage);
+    setSessionTokens(data.token, data.refresh_token);
+    localStorage.setItem('user', username);
+    localStorage.setItem('id_user', String(data.id));
+    localStorage.setItem('username', String(data.username || username));
+    localStorage.setItem('estado_login', '1');
+    localStorage.setItem('user_is_admin', String(Number(data.es_administrador || 0)));
+    localStorage.setItem('user_permissions', JSON.stringify(data.permisos || {}));
+    persistLocalUserSessionSnapshot(username, data);
+    if (passwordInput) passwordInput.value = '';
+    try {
+      await updateUser();
+    } catch (_) {}
+    window.location.href = 'home.php';
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+document.querySelectorAll('[data-acceso-sia-open]').forEach((button) => {
+  button.addEventListener('click', openAccesoSiaView);
+});
+document.getElementById('acceso-sia-back')?.addEventListener('click', closeAccesoSiaView);
+document.getElementById('acceso-sia-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  await submitAccesoSiaLogin();
 });
 

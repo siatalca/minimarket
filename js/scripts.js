@@ -471,6 +471,7 @@ const SHIFT_OWNER_CAJA_KEY = 'turno_owner_caja';
 const REFRESH_TOKEN_STORAGE_KEY = 'refresh_token';
 const SESSION_KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000;
 let refreshInFlightPromise = null;
+let lastAccessRefreshStatus = null;
 let fetchAuthInterceptorInitialized = false;
 let sessionKeepAliveInitialized = false;
 
@@ -546,14 +547,37 @@ async function requestAccessTokenRefreshWith(refreshToken) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refresh_token: safeToken }),
         });
+        lastAccessRefreshStatus = response.status;
         const data = await response.json().catch(() => ({}));
         if (!response.ok || !data?.token || !data?.refresh_token) {
             return null;
         }
         return data;
     } catch (_) {
+        lastAccessRefreshStatus = 0;
         return null;
     }
+}
+
+// Acceso SIA dura como máximo 8 h: cuando el servidor rechaza el refresco (401) se vuelve al login.
+// Un fallo de red (estado 0) no cierra la sesión.
+let accesoSiaExpiredRedirecting = false;
+function redirectIfAccesoSiaExpired() {
+    if (!isAccesoSiaSessionActive() || lastAccessRefreshStatus !== 401 || accesoSiaExpiredRedirecting) return;
+    if (isLoginBootstrapPage()) return;
+    accesoSiaExpiredRedirecting = true;
+    handleSessionExpiredRedirect(window.MinimarketAccesoSia.EXPIRED_MESSAGE);
+}
+
+function notifyAccesoSiaSinCaja(response) {
+    if (!isAccesoSiaSessionActive() || response.status !== 403) return;
+    response.clone().json()
+        .then((data) => {
+            if (window.MinimarketAccesoSia.isSinCajaError(response.status, data)) {
+                window.MinimarketAccesoSia.showSinCajaNotice(document, data.message);
+            }
+        })
+        .catch(() => {});
 }
 
 async function refreshAccessTokenIfNeeded() {
@@ -629,12 +653,16 @@ function setupAuthFetchInterceptor() {
         const alreadyRetried = Boolean(init && init.__authRetried);
 
         const response = await originalFetch(input, init);
+        if (isApiRequest && !isLoginRoute) {
+            notifyAccesoSiaSinCaja(response);
+        }
         if (!isApiRequest || isRefreshRoute || isLoginRoute || response.status !== 401 || alreadyRetried) {
             return response;
         }
 
         const newAccessToken = await refreshAccessTokenIfNeeded();
         if (!newAccessToken) {
+            redirectIfAccesoSiaExpired();
             return response;
         }
 
@@ -653,7 +681,8 @@ async function runSessionKeepAliveTick() {
     const token = getSessionToken();
     const refreshToken = getRefreshToken();
     if (!token || !refreshToken) return;
-    await refreshAccessTokenIfNeeded();
+    const refreshed = await refreshAccessTokenIfNeeded();
+    if (!refreshed) redirectIfAccesoSiaExpired();
 }
 
 function setupSessionKeepAlive() {
@@ -5975,6 +6004,7 @@ function handleSessionExpiredRedirect(message = 'Sesion expirada. Vuelve a inici
     alert(message);
     revokeRefreshTokenSilently();
     clearSessionTokens();
+    window.MinimarketAccesoSia?.clearSession(localStorage);
     localStorage.removeItem('id_user');
     localStorage.removeItem('user_permissions');
     localStorage.removeItem('user_is_admin');
@@ -5982,7 +6012,13 @@ function handleSessionExpiredRedirect(message = 'Sesion expirada. Vuelve a inici
     window.location.href = 'index.php';
 }
 
+function isAccesoSiaSessionActive() {
+    return Boolean(window.MinimarketAccesoSia?.isAccesoSiaSession(localStorage));
+}
+
 function getActiveCajaCajero() {
+    // Acceso SIA no tiene caja ni turno: nunca hay caja/cajero activo para vender.
+    if (isAccesoSiaSessionActive()) return null;
     const caja = String(localStorage.getItem('n_caja') || localStorage.getItem('caja') || '').trim();
     const cajero = String(localStorage.getItem('id_user') || '').trim();
     if (!/^\d+$/.test(caja) || !/^\d+$/.test(cajero)) {
@@ -12518,6 +12554,8 @@ function persistLocalUserSessionSnapshot(usernameInput, loginData) {
 
 // -------------valida y crea la sesion del usuario
 async function login(){
+    // Login normal: si quedó un Acceso SIA en este equipo, se devuelve su caja antes de leerla.
+    window.MinimarketAccesoSia?.restorePreviousCaja(localStorage);
     const username = (document.getElementById('username').value || '').trim();
     const password = document.getElementById('password').value || '';
     const numeroCaja = String(localStorage.getItem('n_caja') || '').trim();
@@ -12558,6 +12596,7 @@ async function login(){
             }
             return;
           }
+          window.MinimarketAccesoSia?.clearSession(localStorage);
           reservationApi?.writeReservation(localStorage, {
             ownerId: data.id,
             ownerLogin: data.user_login || username,
@@ -16105,6 +16144,15 @@ document.addEventListener('DOMContentLoaded', () => {
     applyUserPermissionsToUI();
     applyAdminSiaOnlyProductsActionsVisibility();
     setSalesEnabledByShift(false);
+    const accesoSia = isAccesoSiaSessionActive();
+    if (accesoSia) {
+        // Sin caja ni turno: se ocultan ventas y acciones de caja (css) y se parte en la primera
+        // sección permitida (Reportes si tiene permiso).
+        window.MinimarketAccesoSia.applyHomeMode(document);
+        const startSection = ['reports', 'product', 'inventory', 'shopping', 'configuration', 'cut']
+            .find((id) => typeof canAccessSection !== 'function' || canAccessSection(id)) || 'reports';
+        showSection(startSection);
+    }
     setupSalesBarcodeSuggestionPanel();
     setupProductSearchAutocomplete();
     setupAddProductCodeGuard();
@@ -16143,9 +16191,11 @@ document.addEventListener('DOMContentLoaded', () => {
             focusBarcodeInputForNextScan({ force: true, select: false });
         });
 
-    ensureShiftStartedOnLoad().catch((error) => {
-        console.error('Error ensureShiftStartedOnLoad:', error);
-    });
+    if (!accesoSia) {
+        ensureShiftStartedOnLoad().catch((error) => {
+            console.error('Error ensureShiftStartedOnLoad:', error);
+        });
+    }
 
     scheduleIdleTask(() => {
         warmupProductFormsData().catch(() => {});

@@ -10,12 +10,13 @@
 
     <!-- Único CSS optimizado -->
     <link rel="stylesheet" href="./css/root.css">
-    <link rel="stylesheet" href="./css/styleshome.css?v=20260320b">
+    <link rel="stylesheet" href="./css/styleshome.css?v=20261124a">
     <link rel="stylesheet" href="./css/panel.css?v=20261117a">
     <link rel="stylesheet" href="./css/popup.css?v=20260320a">
 
     <script src="./js/api_base.js?v=20261003a"></script>
-    <script src="./js/session_reservation.js?v=20261007b"></script>
+    <script src="./js/session_reservation.js?v=20261124a"></script>
+    <script src="./js/acceso_sia.js?v=20261124a"></script>
 
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">

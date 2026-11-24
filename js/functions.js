@@ -878,6 +878,12 @@ async function showSection(sectionId) {
     return;
   }
 
+  // Acceso SIA no tiene caja: ventas no está disponible (F1 incluido).
+  if (nextSectionId === 'sales' && window.MinimarketAccesoSia?.isAccesoSiaSession(localStorage)) {
+    window.MinimarketAccesoSia.showSinCajaNotice(document, 'Ventas requiere una caja.');
+    return;
+  }
+
   if (temporaryAdminSectionAccess && String(temporaryAdminSectionAccess.sectionId || '') !== nextSectionId) {
     clearTemporarySectionAccess();
   }

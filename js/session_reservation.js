@@ -20,6 +20,7 @@
     'user_profile',
     'user_sync_pending',
     'password',
+    'acceso_sia',
   ];
   const SESSION_AUTH_KEYS = ['token', 'refresh_token'];
   const COMPLETED_SHIFT_KEYS = [

@@ -20,7 +20,19 @@ const {
   createRestrictedCloseCapability,
   verifyRestrictedCloseCapability,
   RestrictedCloseReplayGuard,
+  isVerifiedAdminSia,
 } = require('./session_reservation_policy');
+const {
+  ACCESO_SIA_SCOPE,
+  ACCESO_SIA_SESSION_MODE,
+  ACCESO_SIA_MAX_SESSION_SECONDS,
+  ACCESO_SIA_NO_AUTORIZADO,
+  CAJA_REQUERIDA,
+  rejectAccesoSiaWithoutCaja,
+  decideLoginMode,
+  accesoSiaRemainingSeconds,
+  accesoSiaAccessTokenSeconds,
+} = require('./acceso_sia');
 const { closeShiftCore } = require('./shift_close_core');
 const { decideShiftOperation, buildReviewModeMessage } = require('./shift_operation_guard');
 const { isUserActive } = require('./user_status');
@@ -151,6 +163,27 @@ function issueAccessToken(userId, name) {
     config.jwtSecret,
     { expiresIn: config.jwtExpiresIn }
   );
+}
+
+// Token de Acceso SIA (M-052): scope 'sia' y duracion propia (ver acceso_sia.js).
+function issueAccesoSiaAccessToken(userId, name, expiresInSeconds) {
+  return jwt.sign(
+    { sub: userId, name: String(name || '').trim(), scope: ACCESO_SIA_SCOPE },
+    config.jwtSecret,
+    { expiresIn: expiresInSeconds }
+  );
+}
+
+// Sesion de refresco del Acceso SIA: sin caja, turno ni equipo, marcada con modo 'acceso_sia' y
+// vencida a las 8 h del login (created_at); /api/auth/refresh no la alarga.
+async function createAccesoSiaRefreshSession(userId) {
+  const rawToken = crypto.randomBytes(48).toString('hex');
+  await db.query(
+    `INSERT INTO user_auth_sessions (user_id, token_hash, caja_id, sucursal_id, turno_id, device_hash, modo, expires_at, last_used_at)
+     VALUES (?, ?, NULL, 1, NULL, NULL, ?, NOW() + INTERVAL ? SECOND, NOW())`,
+    [userId, hashRefreshToken(rawToken), ACCESO_SIA_SESSION_MODE, ACCESO_SIA_MAX_SESSION_SECONDS]
+  );
+  return { refreshToken: rawToken };
 }
 
 async function createRefreshSession({
@@ -455,13 +488,9 @@ function isValidCajaNumber(value) {
 const MAX_ACTIVE_BRANCHES_DEFAULT = 3;
 // Cajas activas permitidas por defecto; solo admin_sia puede cambiarlo (system_business_limits).
 const MAX_ACTIVE_BOXES_DEFAULT = 4;
+// Las cajas 1 a 8 son todas normales: la caja 8 dejo de ser exclusiva de admin_sia (M-052),
+// que ahora entra con Acceso SIA, sin caja.
 const MAX_BOX_NUMBER = 8;
-// Caja de uso exclusivo de admin_sia: oculta para los demas y fuera del limite de cajas activas.
-const ADMIN_SIA_BOX_NUMBER = 8;
-
-function isAdminSiaBox(cajaId) {
-  return Number(cajaId) === ADMIN_SIA_BOX_NUMBER;
-}
 const BRANCH_CREATOR_CONTACT_DEFAULT = 'SIA';
 
 function normalizeBranchCode(rawValue) {
@@ -3435,6 +3464,19 @@ async function ensureOperationalTables() {
   if (!current.has('diferencia_tarjeta')) {
     await db.query('ALTER TABLE corte_caja ADD COLUMN diferencia_tarjeta DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER diferencia_efectivo');
   }
+  // Marca del cierre administrativo de turnos abandonados (M-052, server/cerrar_turnos_abandonados.js).
+  if (!current.has('cierre_tipo')) {
+    await db.query('ALTER TABLE corte_caja ADD COLUMN cierre_tipo VARCHAR(30) NULL');
+  }
+  if (!current.has('cierre_admin_usuario_id')) {
+    await db.query('ALTER TABLE corte_caja ADD COLUMN cierre_admin_usuario_id INT NULL');
+  }
+  if (!current.has('cierre_admin_login')) {
+    await db.query('ALTER TABLE corte_caja ADD COLUMN cierre_admin_login VARCHAR(80) NULL');
+  }
+  if (!current.has('cierre_admin_en')) {
+    await db.query('ALTER TABLE corte_caja ADD COLUMN cierre_admin_en DATETIME NULL');
+  }
 
   const [indexes] = await db.query(
     `SELECT INDEX_NAME
@@ -4610,6 +4652,7 @@ async function ensureOperationalTables() {
       sucursal_id INT NULL,
       turno_id INT NULL,
       device_hash VARCHAR(64) NULL,
+      modo VARCHAR(20) NULL,
       expires_at DATETIME NOT NULL,
       revoked_at DATETIME NULL,
       last_used_at DATETIME NULL,
@@ -4629,6 +4672,10 @@ async function ensureOperationalTables() {
   const authSessionColumns = new Set(authSessionColumnsRows.map((row) => row.COLUMN_NAME));
   if (!authSessionColumns.has('sucursal_id')) {
     await db.query('ALTER TABLE user_auth_sessions ADD COLUMN sucursal_id INT NULL AFTER caja_id');
+  }
+  // Modo de la sesion: NULL = login normal con caja; 'acceso_sia' = Acceso SIA sin caja (M-052).
+  if (!authSessionColumns.has('modo')) {
+    await db.query('ALTER TABLE user_auth_sessions ADD COLUMN modo VARCHAR(20) NULL AFTER device_hash');
   }
 
   if (!schemaCreateOnlyMode) {
@@ -4665,6 +4712,7 @@ app.use(async (req, res, next) => {
         req.user = undefined;
       }
     }
+    if (rejectAccesoSiaWithoutCaja(req, res)) return undefined;
     return next();
   }
 
@@ -4675,13 +4723,15 @@ app.use(async (req, res, next) => {
 
   try {
     req.user = jwt.verify(token, config.jwtSecret);
-    return next();
   } catch (err) {
     if (err?.name === 'TokenExpiredError') {
       return res.status(401).json({ message: 'Token expirado', code: 'TOKEN_EXPIRED' });
     }
     return res.status(401).json({ message: 'Token invalido', code: 'TOKEN_INVALID' });
   }
+  // Acceso SIA (sin caja): las rutas que exigen caja o turno responden 403 (lista en acceso_sia.js).
+  if (rejectAccesoSiaWithoutCaja(req, res)) return undefined;
+  return next();
 });
 
 // Rutas /api/tienda/* (clientes) y las del personal para canjear el carrito y generar el QR.
@@ -4891,11 +4941,10 @@ async function getMaxActiveBoxes(executor = db) {
 // Devuelve un mensaje si activar `cajaId` supera el limite; null si se permite.
 // El limite exacto solo se muestra a admin_sia.
 async function checkBoxActivationLimit(executor, cajaId, userId) {
-  if (isAdminSiaBox(cajaId)) return null;
   const maxActive = await getMaxActiveBoxes(executor);
   const [countRows] = await executor.query(
-    'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ? AND n_caja <> ?',
-    [cajaId, ADMIN_SIA_BOX_NUMBER]
+    'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ?',
+    [cajaId]
   );
   const activeOthers = Number(countRows[0]?.total || 0);
   if (activeOthers < maxActive) return null;
@@ -4932,10 +4981,7 @@ app.get('/api/cajas-limit', async (req, res) => {
   if (!(await requireAdminSia(req, res))) return;
   try {
     const maxActive = await getMaxActiveBoxes();
-    const [countRows] = await db.query(
-      'SELECT COUNT(*) AS total FROM cajas WHERE estado = 1 AND n_caja <> ?',
-      [ADMIN_SIA_BOX_NUMBER]
-    );
+    const [countRows] = await db.query('SELECT COUNT(*) AS total FROM cajas WHERE estado = 1');
     return res.json({
       max_cajas_activas: maxActive,
       cajas_activas: Number(countRows[0]?.total || 0),
@@ -5040,11 +5086,8 @@ app.get('/api/getCajas', async (req, res) => {
        LEFT JOIN sucursales s ON s.id_sucursal = c.sucursal_id
        ORDER BY c.n_caja ASC`
     );
-    const visible = (await isAdminSiaUser(req.user?.sub))
-      ? results
-      : results.filter((row) => !isAdminSiaBox(row.n_caja));
-    if (visible.length > 0) {
-      res.json(visible);
+    if (results.length > 0) {
+      res.json(results);
     } else {
       res.json(0);
     }
@@ -5386,9 +5429,6 @@ app.post('/api/device-caja/bind', async (req, res) => {
 
   if (!deviceHash || !isValidCajaNumber(cajaId)) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
-  }
-  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
-    return res.status(409).json({ message: 'Numero de caja no disponible' });
   }
 
   try {
@@ -14005,7 +14045,8 @@ app.post('/api/auth/refresh', async (req, res) => {
   try {
     const tokenHash = hashRefreshToken(refreshToken);
     const [sessionRows] = await db.query(
-      `SELECT id, user_id, caja_id, sucursal_id, turno_id
+      `SELECT id, user_id, caja_id, sucursal_id, turno_id, modo,
+              TIMESTAMPDIFF(SECOND, created_at, NOW()) AS segundos_desde_login
        FROM user_auth_sessions
        WHERE token_hash = ?
          AND revoked_at IS NULL
@@ -14024,6 +14065,14 @@ app.post('/api/auth/refresh', async (req, res) => {
       return res.status(401).json({ message: 'Sesion invalida', code: 'REFRESH_INVALID' });
     }
 
+    // Acceso SIA: maximo 8 h desde el login (created_at no cambia al renovar).
+    const accesoSia = authSession.modo === ACCESO_SIA_SESSION_MODE;
+    const accesoSiaRemaining = accesoSia ? accesoSiaRemainingSeconds(authSession.segundos_desde_login) : 0;
+    if (accesoSia && accesoSiaRemaining <= 0) {
+      await db.query('UPDATE user_auth_sessions SET revoked_at = NOW() WHERE id = ?', [authSession.id]);
+      return res.status(401).json({ message: 'El Acceso SIA termino. Vuelve a iniciar sesion.', code: 'ACCESO_SIA_VENCIDO' });
+    }
+
     if (authSession.turno_id) {
       const [openShiftRows] = await db.query(
         // Turno exacto de esta sesion: sin ventana, para no expulsar a quien tiene un turno largo.
@@ -14040,17 +14089,39 @@ app.post('/api/auth/refresh', async (req, res) => {
     }
 
     const [userRows] = await db.query(
-      'SELECT id, nombre, activo FROM usuarios WHERE id = ? LIMIT 1',
+      'SELECT id, user, nombre, es_administrador, activo FROM usuarios WHERE id = ? LIMIT 1',
       [userId]
     );
     // Un usuario desactivado pierde la sesion al renovarla, aunque el token siga vigente.
-    if (!isUserActive(userRows[0])) {
+    // Lo mismo una sesion SIA cuyo usuario ya no es admin_sia administrador.
+    if (!isUserActive(userRows[0]) || (accesoSia && !isVerifiedAdminSia(userRows[0]))) {
       await db.query('UPDATE user_auth_sessions SET revoked_at = NOW() WHERE id = ?', [authSession.id]);
       return res.status(401).json({ message: 'Usuario no disponible', code: 'REFRESH_INVALID' });
     }
 
     const newRefreshToken = crypto.randomBytes(48).toString('hex');
     const newHash = hashRefreshToken(newRefreshToken);
+
+    if (accesoSia) {
+      // Se cambia el token de refresco, pero no expires_at: la sesion sigue venciendo a las 8 h.
+      await db.query(
+        `UPDATE user_auth_sessions
+         SET token_hash = ?, last_used_at = NOW()
+         WHERE id = ?`,
+        [newHash, authSession.id]
+      );
+      const accessSeconds = accesoSiaAccessTokenSeconds(ACCESS_TOKEN_TTL_SECONDS, accesoSiaRemaining);
+      return res.json({
+        token: issueAccesoSiaAccessToken(userRows[0].id, userRows[0].nombre, accessSeconds),
+        refresh_token: newRefreshToken,
+        token_expires_in: accessSeconds,
+        refresh_expires_in: accesoSiaRemaining,
+        sucursal_id: toInt(authSession.sucursal_id) || 1,
+        acceso_sia: true,
+        numero_caja: null,
+      });
+    }
+
     const newExpiry = new Date(Date.now() + (REFRESH_TOKEN_TTL_SECONDS * 1000));
 
     await db.query(
@@ -14285,6 +14356,16 @@ app.post('/api/restricted-session/close-shift', async (req, res) => {
 });
 
 
+// Permisos de cajero que devuelve el login (fila de usuarios + cajero_permisos).
+function buildLoginPermissions(user) {
+  const permissions = {};
+  CASHIER_PERMISSION_FIELDS.forEach((field) => {
+    const fallback = Boolean(CASHIER_PERMISSION_DEFAULTS[field]);
+    permissions[field] = normalizeBool(user[field], fallback) ? 1 : 0;
+  });
+  return permissions;
+}
+
 // -----------------Validacion de usuario
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
@@ -14296,6 +14377,11 @@ app.post('/api/login', async (req, res) => {
 
   if (!usernameInput || !passwordInput) {
     return res.status(400).json({ message: 'Datos incompletos o invalidos' });
+  }
+  // Login normal siempre con caja; sin caja solo el Acceso SIA (acceso_sia: true, M-052).
+  const loginMode = decideLoginMode(req.body, cajaId);
+  if (loginMode === 'caja_requerida') {
+    return res.status(400).json({ ...CAJA_REQUERIDA });
   }
 
   // El intento se cuenta antes de esperar a la base de datos, para que pedidos simultaneos
@@ -14354,6 +14440,37 @@ app.post('/api/login', async (req, res) => {
       return res.status(403).json({ message: 'Usuario desactivado. Contacta al administrador.', code: 'USER_DISABLED' });
     }
 
+    // Acceso SIA: solo admin_sia administrador. Sin caja, reserva, vinculo de equipo, turno ni
+    // "conectados": solo la sesion de refresco marcada y un token con scope 'sia'.
+    if (loginMode === 'acceso_sia') {
+      if (!isVerifiedAdminSia(user)) {
+        return res.status(403).json({ ...ACCESO_SIA_NO_AUTORIZADO });
+      }
+      if (upgradeHash) {
+        const hashed = await bcrypt.hash(passwordInput, 12);
+        await db.query('UPDATE usuarios SET contrasena = ? WHERE id = ?', [hashed, user.id]);
+      }
+      const accessSeconds = accesoSiaAccessTokenSeconds(ACCESS_TOKEN_TTL_SECONDS, ACCESO_SIA_MAX_SESSION_SECONDS);
+      const siaSession = await createAccesoSiaRefreshSession(Number(user.id));
+      return res.json({
+        message: 'Login exitoso',
+        token: issueAccesoSiaAccessToken(user.id, user.nombre, accessSeconds),
+        refresh_token: siaSession.refreshToken,
+        token_expires_in: accessSeconds,
+        refresh_expires_in: ACCESO_SIA_MAX_SESSION_SECONDS,
+        id: user.id,
+        username: user.nombre,
+        user_login: String(user.user || '').trim(),
+        es_administrador: Number(user.es_administrador || 0),
+        sucursal_id: 1,
+        permisos: buildLoginPermissions(user),
+        reservation_token: null,
+        review_mode: null,
+        acceso_sia: true,
+        numero_caja: null,
+      });
+    }
+
     let reservation = null;
     let reservationInvalid = false;
     if (reservationTokenInput) {
@@ -14366,10 +14483,6 @@ app.post('/api/login', async (req, res) => {
       } catch (_) {
         reservationInvalid = true;
       }
-    }
-
-    if (isAdminSiaBox(cajaId) && !isAdminSiaUsername(user.user)) {
-      return res.status(400).json({ message: `Caja ${cajaId} no registrada.` });
     }
 
     let openShiftOwner = null;
@@ -14514,12 +14627,6 @@ app.post('/api/login', async (req, res) => {
       deviceHash: deviceHash || null,
     });
 
-    const permissions = {};
-    CASHIER_PERMISSION_FIELDS.forEach((field) => {
-      const fallback = Boolean(CASHIER_PERMISSION_DEFAULTS[field]);
-      permissions[field] = normalizeBool(user[field], fallback) ? 1 : 0;
-    });
-
     return res.json({
       message: 'Login exitoso',
       token,
@@ -14531,7 +14638,7 @@ app.post('/api/login', async (req, res) => {
       user_login: String(user.user || '').trim(),
       es_administrador: Number(user.es_administrador || 0),
       sucursal_id: sucursalId || 1,
-      permisos: permissions,
+      permisos: buildLoginPermissions(user),
       reservation_token: reservationToken,
       review_mode: reviewMode
         ? {
@@ -15339,9 +15446,6 @@ app.post('/api/addCaja', async (req, res) => {
   if (!isValidCajaNumber(cajaId) || !cajaName || boxState === null) {
     return res.status(400).json({ error: 'Datos incompletos o invalidos' });
   }
-  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
-    return res.status(409).json({ error: 'Numero de caja no disponible' });
-  }
 
   try {
     const branchId = requestedBranchId || 1;
@@ -15393,9 +15497,6 @@ app.post('/api/cajas/upsert', async (req, res) => {
 
   if (!isValidCajaNumber(cajaId) || !cajaName || boxState === null) {
     return res.status(400).json({ error: 'Datos de caja incompletos o invalidos' });
-  }
-  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
-    return res.status(409).json({ error: 'Numero de caja no disponible' });
   }
 
   let connection;
@@ -15500,9 +15601,6 @@ app.delete('/api/cajas/:numero', async (req, res) => {
   const cajaId = toInt(req.params?.numero);
   if (!isValidCajaNumber(cajaId)) {
     return res.status(400).json({ error: 'Numero de caja invalido' });
-  }
-  if (isAdminSiaBox(cajaId) && !(await isAdminSiaUser(req.user?.sub))) {
-    return res.status(404).json({ error: 'Caja no encontrada' });
   }
 
   let connection;

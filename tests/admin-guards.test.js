@@ -95,13 +95,25 @@ for (const file of BACKENDS) {
     }
   });
 
-  test(`${label}: protege admin_sia y la caja 8`, () => {
-    assert.match(source, /function isAdminSiaBox\(cajaId\)/);
-    assert.ok((source.match(/isAdminSiaBox\(cajaId\) && !\(await isAdminSiaUser\(req\.user\?\.sub\)\)/g) || []).length >= 4,
-      'addCaja, upsert, delete y bind deben bloquear la caja 8');
-    assert.match(source, /results\.filter\(\(row\) => !isAdminSiaBox\(row\.n_caja\)\)/);
+  test(`${label}: la cuenta admin_sia no aparece en las listas de usuarios`, () => {
     assert.match(source, /results\.filter\(\(row\) => !isAdminSiaUsername\(row\.user\)\)/);
   });
+
+  // M-052: en el servidor central la caja 8 es una caja normal (admin_sia entra con Acceso SIA).
+  // El paquete de cajas (paquete_cliente_db) aun no se actualiza y conserva la caja 8 exclusiva.
+  if (label.startsWith('server')) {
+    test(`${label}: la caja 8 ya no es exclusiva de admin_sia`, () => {
+      assert.doesNotMatch(source, /isAdminSiaBox|ADMIN_SIA_BOX_NUMBER/);
+      assert.match(source, /const MAX_BOX_NUMBER = 8;/);
+    });
+  } else {
+    test(`${label}: protege la caja 8 de admin_sia`, () => {
+      assert.match(source, /function isAdminSiaBox\(cajaId\)/);
+      assert.ok((source.match(/isAdminSiaBox\(cajaId\) && !\(await isAdminSiaUser\(req\.user\?\.sub\)\)/g) || []).length >= 4,
+        'addCaja, upsert, delete y bind deben bloquear la caja 8');
+      assert.match(source, /results\.filter\(\(row\) => !isAdminSiaBox\(row\.n_caja\)\)/);
+    });
+  }
 
   test(`${label}: los errores 500 no devuelven el detalle interno`, () => {
     assert.doesNotMatch(source, /status\(500\)\.json\(\{ (error|message): (err|error)\.message/);
@@ -115,8 +127,9 @@ for (const file of BACKENDS) {
   test(`${label}: un usuario desactivado no inicia sesion ni renueva la sesion`, () => {
     assert.match(source, /u\.es_administrador, u\.activo,/);
     assert.match(source, /if \(!isUserActive\(user\)\) \{/);
-    assert.match(source, /'SELECT id, nombre, activo FROM usuarios WHERE id = \? LIMIT 1'/);
-    assert.match(source, /if \(!isUserActive\(userRows\[0\]\)\) \{/);
+    // El servidor central tambien lee user y es_administrador para el Acceso SIA (M-052).
+    assert.match(source, /'SELECT id, (user, )?nombre, (es_administrador, )?activo FROM usuarios WHERE id = \? LIMIT 1'/);
+    assert.match(source, /if \(!isUserActive\(userRows\[0\]\)( \|\| \(accesoSia && !isVerifiedAdminSia\(userRows\[0\]\)\))?\) \{/);
     assert.match(source, /async function ensureUserActiveColumn\(\)/);
   });
 

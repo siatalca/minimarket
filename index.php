@@ -10,7 +10,7 @@
 
     <!-- Asegúrate de que root.css vaya primero -->
     <link rel="stylesheet" href="./css/root.css">
-    <link rel="stylesheet" href="./css/styleslogin.css" />
+    <link rel="stylesheet" href="./css/styleslogin.css?v=20261124a" />
 </head>
 
 <body>
@@ -223,6 +223,7 @@
             <input id="nombre_caja" type="text" value="Caja 1">
             <button>Guardar</button>
         </form>
+        <button type="button" class="acceso-sia-link" data-acceso-sia-open>Acceso SIA</button>
     </div>
     <!--fin agregar nueva caja-->
 
@@ -261,17 +262,40 @@
             <pre id="restricted-close-receipt" class="hidden"></pre>
             <button id="retry-restricted-print" class="hidden" type="button">Reintentar impresión</button>
         </section>
+        <button type="button" class="acceso-sia-link" data-acceso-sia-open>Acceso SIA</button>
     </div>
     <!--fin login-->
 
-    <script src="./js/session_reservation.js?v=20261007b"></script>
+    <!------------acceso SIA: soporte sin caja ni turno-->
+    <div id="acceso-sia" class="login-container hidden">
+        <div class="login-brand">
+            <img src="./img/cajero-automatico.png" alt="" class="acceso-sia-logo">
+            <div class="login-brand-text">
+                <h1>Acceso SIA</h1>
+                <p>Soporte sin caja. No abre turno ni permite vender.</p>
+            </div>
+        </div>
+        <form id="acceso-sia-form" novalidate>
+            <label for="acceso-sia-username" class="acceso-sia-label">Usuario</label>
+            <input type="text" id="acceso-sia-username" autocomplete="username" autocapitalize="none" spellcheck="false" required />
+            <label for="acceso-sia-password" class="acceso-sia-label">Contraseña</label>
+            <input type="password" id="acceso-sia-password" autocomplete="current-password" required />
+            <button type="submit" id="acceso-sia-submit">Entrar sin caja</button>
+        </form>
+        <p id="acceso-sia-error" class="hidden" role="alert"></p>
+        <button type="button" class="acceso-sia-link" id="acceso-sia-back">Volver</button>
+    </div>
+    <!--fin acceso SIA-->
+
+    <script src="./js/session_reservation.js?v=20261124a"></script>
     <script src="./js/restricted_shift_close.js?v=20261007a"></script>
-    <script src="./js/login.js?v=20261117b"></script>
+    <script src="./js/acceso_sia.js?v=20261124a"></script>
+    <script src="./js/login.js?v=20261124a"></script>
     <script src="./js/api_base.js?v=20261003a"></script>
     <script src="./js/product_name_display.js?v=20260923a"></script>
     <script src="./js/ticket_print_method.js?v=20261003b"></script>
     <script src="./js/html_escape.js?v=20261112a"></script>
-    <script src="./js/scripts.js?v=20261117a"></script>
+    <script src="./js/scripts.js?v=20261124a"></script>
 
 </body>
 

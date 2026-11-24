@@ -13,12 +13,15 @@ async function logoutToLogin({ preserveShift } = { preserveShift: true }) {
     } catch (_) {}
   }
 
+  const accesoSia = Boolean(window.MinimarketAccesoSia?.isAccesoSiaSession(localStorage));
   try {
     localStorage.setItem('estado_login', '0');
-    await deleteConnectedUser();
+    // Acceso SIA no ocupó cupo de caja: no hay conexión de caja que desconectar.
+    if (!accesoSia) await deleteConnectedUser();
     await updateUser();
   } catch (_) {
   }
+  window.MinimarketAccesoSia?.clearSession(localStorage);
 
   sessionStorage.removeItem('token');
   localStorage.removeItem('token');
@@ -90,6 +93,20 @@ async function confirmPendingTicketsBeforeLogout() {
 
 const logoutBtn = document.getElementById('logout');
 if (logoutBtn) logoutBtn.addEventListener('click', async () => {
+  // Acceso SIA: sin caja ni turno, solo se cierra la sesión (no toca la reserva ni el turno del equipo).
+  if (window.MinimarketAccesoSia?.isAccesoSiaSession(localStorage)) {
+    const confirmSiaExit = (typeof window.appConfirm === 'function')
+      ? await window.appConfirm('¿Deseas cerrar el Acceso SIA?', 'warning', {
+        title: 'Salir del sistema',
+        okText: 'Salir',
+        cancelText: 'Cancelar',
+      })
+      : window.confirm('¿Deseas cerrar el Acceso SIA?');
+    if (!confirmSiaExit) return;
+    await logoutToLogin({ preserveShift: true });
+    return;
+  }
+
   const canLogoutWithPending = await confirmPendingTicketsBeforeLogout();
   if (!canLogoutWithPending) return;
 

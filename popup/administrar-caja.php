@@ -320,12 +320,10 @@
     <script>
         const API_URL = window.MinimarketApi.resolveApiBase();
 
-        // La caja 8 esta reservada para admin_sia: el resto de usuarios solo ve las cajas 1 a 7.
-        const ADMIN_SIA_BOX_NUMBER = 8;
+        // Cajas 1 a 8, todas normales (la caja 8 ya no es exclusiva de admin_sia, M-052).
         let isAdminSiaSession = false;
         function getSlots() {
-            return Array.from({ length: 8 }, (_, i) => i + 1)
-                .filter((n) => isAdminSiaSession || n !== ADMIN_SIA_BOX_NUMBER);
+            return Array.from({ length: 8 }, (_, i) => i + 1);
         }
         let boxesByNumber = new Map();
         let branchesById = new Map();
@@ -784,7 +782,7 @@
                     input.max = String(data.max_permitido || 8);
                     input.value = String(data.max_cajas_activas || 4);
                 }
-                setBoxLimitInfo(`Activas ahora: ${data.cajas_activas} de ${data.max_cajas_activas} (sin contar la Caja ${ADMIN_SIA_BOX_NUMBER} de SIA).`);
+                setBoxLimitInfo(`Activas ahora: ${data.cajas_activas} de ${data.max_cajas_activas}.`);
                 card.classList.remove('hidden');
                 if (!isAdminSiaSession) {
                     isAdminSiaSession = true;

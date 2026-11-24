@@ -332,6 +332,74 @@ body.dark .theme-toggle:focus-visible {
     outline-color: var(--clr-primary-dark);
 }
 
+/* =================  ACCESO SIA  ================= */
+/* Enlace discreto: texto, no botón principal (pisa los estilos de botón de ambos contenedores). */
+.login-container .acceso-sia-link,
+.welcome-container .acceso-sia-link {
+    display: block;
+    width: auto;
+    margin: 1rem auto 0;
+    padding: 6px 10px;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: #1e40af;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
+.login-container .acceso-sia-link:hover,
+.welcome-container .acceso-sia-link:hover {
+    background: rgba(29, 78, 216, 0.08);
+    color: #1e3a8a;
+}
+
+.acceso-sia-link:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+}
+
+.acceso-sia-logo {
+    width: 78px;
+    height: 78px;
+    object-fit: contain;
+    border-radius: 50%;
+    border: 2px solid rgba(29, 78, 216, 0.22);
+    background: #fff;
+}
+
+.login-container .acceso-sia-label {
+    display: block;
+    margin-top: 0.6rem;
+    text-align: left;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #334155;
+}
+
+#acceso-sia-error {
+    color: #b91c1c;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.9em;
+    margin-top: 1em;
+}
+
+body.dark .login-container .acceso-sia-link,
+body.dark .welcome-container .acceso-sia-link {
+    background: none;
+    color: #93c5fd;
+}
+
+body.dark .login-container .acceso-sia-label {
+    color: #cbd5e1;
+}
+
 /* =================  RESPONSIVO  ================= */
 @media (max-width: 400px) {
     .login-container {
