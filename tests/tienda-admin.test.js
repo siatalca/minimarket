@@ -186,6 +186,7 @@ async function registerCustomer(ctx, overrides = {}) {
     nombre: `Cliente ${phoneSeq}`,
     correo: `cliente${phoneSeq}@correo.cl`,
     clave: 'clave123',
+    acepta_condiciones: true,
     ...overrides,
   };
   const res = await ctx.call('POST', '/api/tienda/cuenta/registro', { body });

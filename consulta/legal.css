@@ -1,0 +1,82 @@
+/* Páginas de Privacidad y Condiciones de uso (M-051). Se carga después de consulta.css y reutiliza su paleta. */
+body.legal {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+.legal .top-store {
+    white-space: normal;
+}
+
+.legal-main {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 16px;
+}
+
+.legal-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin-bottom: 12px;
+    font-size: 0.95rem;
+}
+
+.legal-nav a,
+.legal-doc a,
+.legal-foot a {
+    color: var(--blue);
+    font-weight: 700;
+}
+
+.legal-nav a {
+    display: inline-block;
+    padding: 8px 2px;
+}
+
+.legal-draft {
+    margin-bottom: 14px;
+    font-weight: 700;
+}
+
+.legal-doc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 16px 20px;
+    overflow-wrap: anywhere;
+}
+
+.legal-doc h1 {
+    font-family: var(--display);
+    color: var(--ink);
+    font-size: 1.6rem;
+    line-height: 1.15;
+    margin: 0 0 6px;
+}
+
+.legal-doc h2 {
+    margin-top: 22px;
+}
+
+.legal-date {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.legal-doc p,
+.legal-doc ul {
+    margin: 8px 0 0;
+}
+
+.legal-doc ul {
+    padding-left: 1.25em;
+}
+
+.legal-doc li + li {
+    margin-top: 6px;
+}
+
+.legal-foot {
+    margin-top: 16px;
+    text-align: center;
+}

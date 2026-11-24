@@ -92,7 +92,7 @@ async function startApp({ google = true, limits = {}, loadQrModule, clock } = {}
 }
 
 async function register(ctx, overrides = {}) {
-  const body = { telefono: '+56911112222', nombre: 'Ana', correo: 'ana@correo.cl', clave: 'clave123', ...overrides };
+  const body = { telefono: '+56911112222', nombre: 'Ana', correo: 'ana@correo.cl', clave: 'clave123', acepta_condiciones: true, ...overrides };
   return ctx.call('POST', '/api/tienda/cuenta/registro', { body });
 }
 
@@ -219,6 +219,24 @@ test('registro, login, cuenta, logout y datos duplicados', async () => {
   }
 });
 
+test('registro: exige acepta_condiciones === true (con telefono y con Google); no crea cuenta', async () => {
+  const ctx = await startApp();
+  try {
+    for (const value of [undefined, false, 'true', 1, 'si', null]) {
+      const r = await register(ctx, { acepta_condiciones: value });
+      assert.equal(r.status, 400, `acepta_condiciones=${String(value)}`);
+      assert.equal(r.json.code, 'TERMS_REQUIRED');
+      assert.equal(r.json.message, 'Debes aceptar las Condiciones de uso y la Politica de privacidad.');
+    }
+    const viaGoogle = await register(ctx, { acepta_condiciones: false, google_credential: 'cred-ana' });
+    assert.equal(viaGoogle.json.code, 'TERMS_REQUIRED');
+    assert.equal(ctx.repo.state.accounts.length, 0, 'no se creo ninguna cuenta');
+    assert.equal((await register(ctx)).status, 201, 'con acepta_condiciones: true si se crea');
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('login: 429 por intentos fallidos desde una IP', async () => {
   const ctx = await startApp({ limits: { loginIp: 3 } });
   try {
@@ -242,12 +260,14 @@ test('registro: 429 al superar el limite por IP (60/h por defecto); los datos in
     assert.equal((await register(ctx, { telefono: '+56900000001', correo: 'a1@c.cl' })).status, 201);
     assert.equal((await register(ctx, { telefono: '+56900000002', correo: 'a2@c.cl' })).status, 201);
     for (let i = 0; i < 5; i += 1) {
-      const invalid = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: 'malo', nombre: 'A', correo: 'a@c.cl', clave: 'clave123' } });
+      const invalid = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: 'malo', nombre: 'A', correo: 'a@c.cl', clave: 'clave123', acepta_condiciones: true } });
       assert.equal(invalid.status, 400);
+      const noTerms = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000009', nombre: 'A', correo: 'a9@c.cl', clave: 'clave123' } });
+      assert.equal(noTerms.json.code, 'TERMS_REQUIRED', 'sin aceptar condiciones tampoco cuenta');
     }
-    const r1 = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000003', nombre: 'A', correo: 'a3@c.cl', clave: 'clave123' } });
-    const r2 = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000004', nombre: 'A', correo: 'a4@c.cl', clave: 'clave123' } });
-    const r3 = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000005', nombre: 'A', correo: 'a5@c.cl', clave: 'clave123' } });
+    const r1 = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000003', nombre: 'A', correo: 'a3@c.cl', clave: 'clave123', acepta_condiciones: true } });
+    const r2 = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000004', nombre: 'A', correo: 'a4@c.cl', clave: 'clave123', acepta_condiciones: true } });
+    const r3 = await ctx.call('POST', '/api/tienda/cuenta/registro', { ip: '10.2.2.2', body: { telefono: '+56900000005', nombre: 'A', correo: 'a5@c.cl', clave: 'clave123', acepta_condiciones: true } });
     assert.deepEqual([r1.status, r2.status, r3.status], [201, 201, 429]);
   } finally {
     await ctx.close();

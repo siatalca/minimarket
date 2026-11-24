@@ -195,6 +195,9 @@ function registerTiendaRoutes(app, {
     if (!nombre) return sendError(res, 400, 'INVALID_DATA', 'Ingresa tu nombre (maximo 60 caracteres).');
     if (!core.isValidPassword(body.clave)) return sendError(res, 400, 'INVALID_DATA', 'La clave debe tener entre 6 y 72 caracteres.');
     if (!hasGoogle && !correo) return sendError(res, 400, 'INVALID_DATA', 'Ingresa un correo valido.');
+    if (body.acepta_condiciones !== true) {
+      return sendError(res, 400, 'TERMS_REQUIRED', 'Debes aceptar las Condiciones de uso y la Politica de privacidad.');
+    }
 
     // Solo cuentan los pedidos con datos validos; siempre antes del primer await.
     const ip = clientIpKey(req);

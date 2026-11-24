@@ -15,6 +15,7 @@
     const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client';
     const NETWORK_ERROR = 'No hay conexión con la tienda. Revisa tu internet o el WiFi del local e intenta de nuevo.';
     const SHAPE_ERROR = 'La tienda respondió algo inesperado. Intenta de nuevo en un momento.';
+    const TERMS_ERROR = 'Para crear la cuenta debes aceptar las Condiciones de uso y la Política de privacidad.';
 
     let API_URL = '';
     try {
@@ -672,6 +673,7 @@
             field('reg-telefono', 'Teléfono celular', input({ type: 'tel', inputmode: 'tel', autocomplete: 'tel', placeholder: '9 1234 5678', value: v.telefono || '', maxlength: 20 }), errors.telefono, 'Con este número y tu clave entras después.'),
             field('reg-correo', 'Correo', correoInput, errors.correo),
             field('reg-clave', 'Clave', input({ type: 'password', autocomplete: 'new-password', maxlength: 72 }), errors.clave, 'Mínimo 6 caracteres.'),
+            termsField(Boolean(v.acepta), errors.acepta),
             state.accountFormError ? h('p', { class: 'msg msg-error', role: 'alert', text: state.accountFormError }) : null,
             h('button', { class: 'btn-primary btn-wide', type: 'submit', disabled: state.busy, text: state.busy ? 'Creando cuenta…' : 'Crear cuenta' }),
             h('p', { class: 'field-hint', text: 'Usamos tus datos solo para tu cuenta y tu carrito en esta tienda.' }),
@@ -681,6 +683,25 @@
             submitRegister(form);
         });
         return h('div', {}, [form, g ? null : googleBlock('register')]);
+    }
+
+    // Casilla obligatoria para crear cuenta (M-051). Los enlaces abren en otra pestaña para no perder lo escrito.
+    function termsField(checked, error) {
+        const box = input({ type: 'checkbox', id: 'reg-acepta', class: 'check-input', checked, required: true, 'aria-describedby': 'reg-acepta-error', 'aria-invalid': error ? 'true' : null });
+        const legalLink = (href, text) => h('a', { href, target: '_blank', rel: 'noopener', text });
+        return h('div', { class: 'field check-field' }, [
+            h('div', { class: 'check-row' }, [
+                box,
+                h('label', { for: 'reg-acepta', class: 'check-label' }, [
+                    'Acepto las ',
+                    legalLink('./condiciones.html', 'Condiciones de uso'),
+                    ' y la ',
+                    legalLink('./privacidad.html', 'Política de privacidad'),
+                    '.',
+                ]),
+            ]),
+            h('p', { id: 'reg-acepta-error', class: 'field-error', text: error || '' }),
+        ]);
     }
 
     function focusFirstError(form) {
@@ -713,20 +734,26 @@
             correo: $('reg-correo').value,
             clave: $('reg-clave').value,
         };
-        state.accountValues = { nombre: values.nombre, telefono: values.telefono, correo: values.correo };
+        const acepta = $('reg-acepta').checked === true;
+        state.accountValues = { nombre: values.nombre, telefono: values.telefono, correo: values.correo, acepta };
         const result = C.validateRegistration(values);
-        state.accountErrors = result.errors;
+        state.accountErrors = { ...result.errors };
+        if (!acepta) state.accountErrors.acepta = TERMS_ERROR;
         state.accountFormError = '';
-        if (!result.ok) {
+        if (!result.ok || !acepta) {
             renderAccount();
             focusFirstError($('account-panel'));
             return;
         }
-        const body = { ...result.data };
+        const body = { ...result.data, acepta_condiciones: true };
         if (state.pendingGoogle) body.google_credential = state.pendingGoogle.credential;
         await accountRequest(() => api('api/tienda/cuenta/registro', { method: 'POST', body }), (error) => {
             if (error.code === 'PHONE_TAKEN') state.accountErrors = { telefono: error.message };
             else if (error.code === 'EMAIL_TAKEN') state.accountErrors = { correo: error.message };
+            else if (error.code === 'TERMS_REQUIRED') {
+                state.accountValues = { ...state.accountValues, acepta: false };
+                state.accountErrors = { acepta: TERMS_ERROR };
+            }
             else return false;
             return true;
         });

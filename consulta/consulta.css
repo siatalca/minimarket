@@ -313,6 +313,58 @@ input[aria-invalid="true"] {
     display: none;
 }
 
+/* Casilla «Acepto las Condiciones…» (M-051). */
+.check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.check-row .check-input {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    min-height: 0;
+    margin: 1px 0 0;
+    padding: 0;
+    accent-color: var(--blue);
+}
+
+.check-row .check-input[aria-invalid="true"] {
+    outline: 2px solid var(--out);
+    outline-offset: 2px;
+}
+
+.check-label {
+    font-weight: 400 !important;
+    color: var(--text) !important;
+    font-size: 0.95rem;
+}
+
+.check-label a,
+.legal-links a {
+    color: var(--blue);
+    font-weight: 700;
+}
+
+/* Pie con enlaces legales (M-051). El body ya deja espacio para las pestañas fijas. */
+.legal-links {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 4px 16px 8px;
+    font-size: 0.85rem;
+}
+
+.legal-links a {
+    display: inline-block;
+    padding: 8px 2px;
+    color: var(--muted);
+}
+
 .center {
     text-align: center;
 }

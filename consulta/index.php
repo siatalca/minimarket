@@ -24,7 +24,7 @@
     <link rel="apple-touch-icon" href="./icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="Precios">
-    <link rel="stylesheet" href="./consulta.css?v=20261118b">
+    <link rel="stylesheet" href="./consulta.css?v=20261124a">
 </head>
 <body>
     <header class="top">
@@ -74,6 +74,11 @@
         </section>
     </main>
 
+    <footer class="legal-links">
+        <a href="./privacidad.html">Privacidad</a>
+        <a href="./condiciones.html">Condiciones de uso</a>
+    </footer>
+
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
     <nav class="tabs" aria-label="Secciones">
@@ -87,6 +92,6 @@
     <script src="../js/camera_barcode_scanner.js?v=20261116b"></script>
     <script src="./consulta_core.js?v=20261118c"></script>
     <script src="./consulta_ui.js?v=20261118a"></script>
-    <script src="./consulta.js?v=20261118c"></script>
+    <script src="./consulta.js?v=20261124a"></script>
 </body>
 </html>
